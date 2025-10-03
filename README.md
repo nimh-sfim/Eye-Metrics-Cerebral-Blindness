@@ -1,48 +1,19 @@
-# DOCUMENTATION FOR KRONEMER ET AL., 2025
+# Documentation for Kronemer et al., Communications Biology, 2025
 
 The following information details the data sources, analysis scripts, and visualization methods for the results and figures presented in Kronemer et al., 2025. Full methods and statistical analyses details are written in the Kronemer et al., 2025 Methods and Statistical Analyses sections.
 
 ## RAW DATA
 
-1. Participant information (.pdf, .xlsx): Participant_Information.xlsx: Summary of participant demographic information and patient lesion/impairment information.
+All control (n = 8) and patient participants (n = 8) have two associated file types:
 
-2. Behavioral files (.log, .pdf): Output behavioral files from the visual perception task that are used in subsequent behavioral analyses. The session notes are also included.
+1. Behavioral files (.log): Output behavioral files from the visual perception task. Many participants have multiple log files corresponding with multiple study sessions.
 
-3. Eye tracking and pupillometry (.mat): .
+2. Eye tracking and pupillometry (.mat): Output EyeLink file (SR Research, Inc.) from the visual perception task. Each EyeLink file corresponds with a single log file. 
 
-4. Magnetoencephalography (MEG; ): .
+One patient participant (P4) completed additional behavioral and magnetoencephalography (MEG) study sessions. The additional behavioral session invovled an "adapted" perception task (see the "Adapated_Task" folder). The original task was tested with P4 in both behavioral and MEG study sessions (see "Original_Task" folder). The MEG sessions includes the behavioral log file and MEG files.
 
 ## CODE
 
 1. Behavioral analysis (Afterimage_task_behavioral_analysis_v4.m): analyzes subject behavioral files and creates subject-level figures and matrices of all subject results. The output of these behavioral analyses are stored in Participant_Afterimage_Image_VVIQ_Data.xlsx. 
 
 2. Bootstrapping analysis (Afterimage_vs_VVIQ_bootstrapping_analysis.m): reads data from Participant_Afterimage_Image_VVIQ_Data.xlsx and performs a bootstrap analysis on image and afterimage sharpness, contrast, and duration and creates summary figures used in Figure 3 (see details below).
-
-## MAIN FIGURES
-
-## Figure 1
-Created with Illustrator (Adobe Inc.). See Kronemer et al., 2025 Methods section for details on stimulus source, parameters, and task phases.
-
-## Figure 2
-
-## Figure 3
-
-## Figure 4
-
-## Figure 5
-
-## SUPPLEMENTARY FIGURES
-
-## Figure 1
-
-## Figure 2
-
-## Figure 3
-
-## Figure 4
-
-## Figure 5
-
-## Figure 6
-
-## Figure 7
