@@ -6,7 +6,7 @@ Analysis steps:
 (4) Run EyeLink_Plot_Subject_Eye_Timecourses.m script. Creates pupil, blink, and microsaccade timecourses in Figure 6 and Supplementary Figure 6.
 
 Data
-Relevant data (.mat) is stored in the Patients and Controls directory here https://osf.io/cygmj/
+Relevant data (.mat) is stored in the Patients and Controls directories here https://osf.io/cygmj/
 
 Helper Functions
 EyeLink preprocessing (e.g., pupil blink removal): stublink.m and Stublinks60.m
