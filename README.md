@@ -20,10 +20,16 @@ Behavioral Analysis
 
 Behavioral analysis evaluates performance on the perception task, including perception rate and reaction time in the sighted and blind field for patient participants and the left and right visual field for control participants.
 
+Relevant figures: Figure 2, Figure 6B, C, D, E, Supplementary Figure 1, and Supplementary Figure 2 
+
 EyeLink Analysis
 
 EyeLink analysis invovle preprocessing and extracting of eye measures (e.g., blink detection and removal from pupil size data and microsaccade detection). Eye measure epochs are segmented relative to task events and indexed by the presentation location. Group-level analysis evaluate eye metrics across participants. Machine learning analysis involves training on the eye measure epochs and predicting stimulus presentation vs absence of task stimuli in the sighted and blind field for patient participants and the left and right visual field for control participants.
 
+Relevant figures: Figure 3, Figure 4, Figure 5, Figure 6A, Supplementary Figure 3, Supplementary Figure 5, and Supplemenatary Figure 6
+
 MEG Analysis
 
 MEG analysis assess event-related field changes associated with stimuli presented in the sighted and blind field of patient participant P4. Cluster-based permutation analyses are performed to assess statistically significant field potentials.
+
+Relevant figures: Figure 6F and Supplementary Figure 7
