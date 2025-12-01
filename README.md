@@ -20,15 +20,10 @@ Behavioral Analysis
 
 Behavioral analysis evaluates performance on the perception task, including perception rate and reaction time in the sighted and blind field for patient participants and the left and right visual field for control participants.
 
-1. Behavioral analysis (Afterimage_task_behavioral_analysis_v4.m): analyzes subject behavioral files and creates subject-level figures and matrices of all subject results. The output of these behavioral analyses are stored in Participant_Afterimage_Image_VVIQ_Data.xlsx.
-
 EyeLink Analysis
 
-EyeLink analysis invovle preprocessing and extracting of eye measures (e.g., blink detection and removal from pupil size data and microsaccade detection). Eye measure epochs are segmented relative to task events and indexed by the presentation location. Group-level analysis evaluate eye metrics across participants.
-
-Machine learning analysis involve training on the eye measure epochs and predicting perception of task stimuli in the sighted and blind field for patient participants and the left and right visual field for control participants.
-
+EyeLink analysis invovle preprocessing and extracting of eye measures (e.g., blink detection and removal from pupil size data and microsaccade detection). Eye measure epochs are segmented relative to task events and indexed by the presentation location. Group-level analysis evaluate eye metrics across participants. Machine learning analysis involves training on the eye measure epochs and predicting stimulus presentation vs absence of task stimuli in the sighted and blind field for patient participants and the left and right visual field for control participants.
 
 MEG Analysis
 
-3. Bootstrapping analysis (Afterimage_vs_VVIQ_bootstrapping_analysis.m): reads data from Participant_Afterimage_Image_VVIQ_Data.xlsx and performs a bootstrap analysis on image and afterimage sharpness, contrast, and duration and creates summary figures used in Figure 3 (see details below).
+MEG analysis assess event-related field changes associated with stimuli presented in the sighted and blind field of patient participant P4. Cluster-based permutation analyses are performed to assess statistically significant field potentials.
