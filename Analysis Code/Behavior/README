@@ -1,5 +1,7 @@
 Analysis steps:
 
+Note: Update "root_dir" variable to correspond with your data path.
+
 (1) Run Behavioral_Subject_Analysis.m. Outputs results for Figure 2, Figure 6B, C, D, E, and Supplementary Figure 2. 
 (2) Run HVF_Subject_Figures.m. Creates Supplementary Figure 1. 
 
