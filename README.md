@@ -6,7 +6,7 @@ The following information details the data sources and analysis scripts for the 
 
 ## RAW DATA
 
-All control (n = 8) and patient participants (n = 8) have two associated file types:
+All control (n = 8) and patient participants (n = 8) have two associated file types (see Table 1 and 2 in Kronemer et al., 2025 for demographic information):
 
 1. Behavioral files (.log): Output behavioral files from the visual perception task. Many participants have multiple log files corresponding with multiple study sessions.
 
