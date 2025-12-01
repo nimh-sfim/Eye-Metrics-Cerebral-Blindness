@@ -12,7 +12,7 @@ All control (n = 8) and patient participants (n = 8) have two associated file ty
 
 2. Eye tracking and pupillometry files (.mat): Output EyeLink file (SR Research, Inc.) from the visual perception task. Each EyeLink file corresponds with a single log file. 
 
-One patient participant (P4) completed additional behavioral and magnetoencephalography (MEG) study sessions. The additional behavioral session invovled an "adapted" perception task (see the "Adapated_Task" folder). The original task was tested with P4 in both behavioral and MEG study sessions (see "Original_Task" folder). The MEG sessions includes the behavioral log file and MEG files.
+One patient participant (P4) completed additional behavioral and magnetoencephalography (MEG) study sessions. The additional behavioral session invovled an "adapted" perception task (see data directory Patients/P4/Adapted_Task on https://osf.io/cygmj/). The original task was tested with P4 in both behavioral and MEG study sessions (see data directory Patients/P4/Original_Task on https://osf.io/cygmj/). The MEG sessions includes the behavioral log file and MEG files.
 
 ## CODE
 
