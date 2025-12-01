@@ -1,6 +1,6 @@
 Analysis steps:
 
-(1) Run MEG_subject_level_data_analysis.m. Outputs results for Figure 6F and Supplementary Figure 7. Relevant data is in the Patients/P4/Original_Task/MEG_Session stored on OSF 
+(1) Run MEG_subject_level_data_analysis.m. Outputs results for Figure 6F and Supplementary Figure 7. Relevant data is in the Patients/P4/Original_Task/MEG_Session stored here https://osf.io/cygmj/
 
 Helper functions
 Permutation_Analysis.zip houses the scripts/functions that are used by MEG_subject_level_data_analysis.m
