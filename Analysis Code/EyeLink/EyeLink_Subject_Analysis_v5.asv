@@ -1,0 +1,2356 @@
+%% Glare Illusion Paradigm - EyeLink Subject Analysis
+
+% Written by: Sharif I. Kronemer
+% Last Modified Date: 10/31/2024
+
+% Note: Before you run this script make sure to add the edfmex directory
+% into your path and you have previously installed the latest EyeLink
+% Developers Kit (this is relevant if you haven't converted the EyeLink EDF
+% file to .mat format).
+
+% See for additional documentation: https://download.sr-support.com/dispdoc/page9.html
+
+% Version 5
+
+clear all
+
+%% Root Directories & Paths
+
+% Root directory
+root_dir = '/Users/kronemersi/Library/CloudStorage/OneDrive-NationalInstitutesofHealth';
+
+% Add paths
+addpath(fullfile(root_dir,'General_Analysis_Tools/EyeLink_Analysis'))
+addpath(genpath(fullfile(root_dir,'Real_Time_Perception_Study/Analysis/Analysis_Code/EyeLink_Analysis')))
+
+%% Inputs
+
+% Create visualizations? (y = yes; n = no)
+create_visualizations = 'n';
+
+% Patient (1) or control group (0) or custom list (2)
+group_type = 1; 
+
+% Session type (MEG, behavioral, blindsight)
+session_type = 'behavioral';
+
+% Load or run
+% Note: Run = complete subject-level EyeLink analysis from scratch; Load =
+% load previously saved preprocessed EyeLink data.
+analysis_type = 'run';
+
+% Define subjects to run
+
+% Patients
+if group_type == 1
+
+    % Patients
+    % Blind aware: P2, P4, P7, P8
+    % Blind unaware: P1, P3, P5, P6
+    subject_list = {'P2', 'P4', 'P7', 'P8'};
+
+% Controls
+elseif group_type == 0
+
+    % Controls
+    subject_list = {'C1','C2','C3','C4','C5','C6','C7','C8'};
+
+% Custom
+else 
+
+    subject_list = {'C1'};
+
+end
+
+%% Parameters
+
+% EyeLink sampling rate
+sampling_rate = 1000;
+
+% Pre/post epoch duration in ms
+epoch_duration = 9000;
+
+% Baseline duration in ms
+baseline_duration = 1000;
+
+% Stimulus duration
+stim_duration = 3000;
+
+% Blink, and microsaccade smoothing span
+% Note: This smoothing value is meant to remove high frequency noise in the
+% pupillary traces to improve intepretation of results.
+pupil_smoothing_span = 100;
+blink_saccade_smoothing_span = 100;
+
+% Trial removal thresholds
+pupil_extreme_threshold = 1750; % Pix
+blink_threshold = 0.5;
+num_trials_removed_threshold = 15; % Percent
+query_interval = 8001:15000; % 1s pre-stimulus and 6s post-stimulus 
+
+% ISI event time - min max intervals
+ISI_event_time = [4000,7000];
+
+%% Subject-Level Analysis
+
+% Loop over subjects
+for sub = 1:length(subject_list)
+
+    % Define subject
+    subID = subject_list{sub};
+
+    disp(['Running subject ',num2str(subID)])
+
+    % Eye recorded (1 = left; 2 = right)
+    if ismember(subID,{'P4','P2','C1','C2','C3'})
+    
+        num_eye = 2;
+    
+    else
+    
+        num_eye = 1;
+    
+    end
+    
+    %% Subject Directories
+    
+    % Data directory
+    if isequal(session_type, 'MEG')
+        
+        eyelink_dir = fullfile(root_dir,'Cortical_Blindness_Study/Data',subID,'MEG_1/EyeLink');
+        beh_dir = fullfile(root_dir,'Cortical_Blindness_Study/Data',subID,'MEG_1/Behavior');
+        output_dir = fullfile(root_dir,'Cortical_Blindness_Study/Analysis/Subject_Analysis',subID,'MEG_1/EyeLink');
+         
+    else
+
+        eyelink_dir = fullfile(root_dir,'Cortical_Blindness_Study/Data',subID,'OP4/EyeLink');
+        beh_dir = fullfile(root_dir,'Cortical_Blindness_Study/Data',subID,'OP4/Behavior');
+        output_dir = fullfile(root_dir,'Cortical_Blindness_Study/Analysis/Subject_Analysis',subID,'OP4');
+         
+    end
+
+    % Check output dir
+    if isempty(dir(output_dir))
+    
+        mkdir(output_dir)
+    
+    end 
+
+    % Run analysis from scratch
+    if isequal(analysis_type,'run')
+    
+        %% Load Log Data
+    
+        % Note: Log file is used to find indices of task events that are
+        % implemented in the EyeLink analyses
+        
+        % Find directories with log extension
+        log_file = dir([fullfile(beh_dir,'*.log')]);
+    
+        % If more than one log file is found (e.g., multiple sessions or
+        % restarting task during a single session)
+        if size(log_file,1) > 1
+        
+            % Subject specific consideration file number
+            if isequal(subID,'P1') % Note: File 1 = v7; Files 2-4 = v8
+    
+                file_num = [1,2,3,4];
+    
+            elseif ismember(subID,{'P4','P7'})
+        
+                file_num = [1,2,3];
+        
+            elseif ismember(subID,{'P2','P3','P5','P6','C6','115'})
+    
+                file_num = [1,2];
+    
+            else
+        
+                error('Unknown subject condition - add condition!')
+        
+            end
+    
+        % If only one file present, use this one for analysis
+        else
+            
+            file_num = 1;
+        
+        end
+    
+        % Loop over log files
+        for file = file_num
+        
+            % Note: Skipping first behavior file for P7 because the EyeLink
+            % data is empty for this subject. 
+            if isequal(subID,'P7') && file == 1
+        
+                disp(['Skipping log file #', num2str(file)])
+                continue
+        
+            end
+    
+            disp(['Running log file #', num2str(file)])
+    
+            % Open log data
+            cd(beh_dir)
+            log_data = importdata(log_file(file).name);
+    
+            %% Find Events of Interest
+            
+            % Initialize event variables
+            afterimage_phase_onset = [];
+            main_task_phase_onset = [];
+            perception_phase_onset = [];
+            
+            % Mine log file for task phase events
+            for row = 1:size(log_data,1)
+            
+                % Main phase
+                if any(~cellfun('isempty',strfind(log_data(row),'Starting Glare Illusion Main Phase')))
+                   
+                    main_task_phase_onset = row;
+            
+                % Perception phase
+                elseif any(~cellfun('isempty',strfind(log_data(row),'Starting Glare Illusion Perception Phase')))
+            
+                    perception_phase_onset = row;
+            
+                % Afterimage phase (Note: Most subjects did not complete this phase)
+                elseif any(~cellfun('isempty',strfind(log_data(row),'Starting Afterimage Perception Phase')))
+            
+                    afterimage_phase_onset = row;
+            
+                % Button press condition
+                % Note: Earlier version v7 of the task does not specify condition
+                elseif any(~cellfun('isempty',strfind(log_data(row),'Button Condition')))
+                
+                    % Extract row string
+                    row_string = cell2mat(log_data(row));
+            
+                    % Colon index
+                    colon_idx = strfind(row_string,':');
+            
+                    % Button condition
+                    button_condition = str2num(row_string(colon_idx+2:end));
+            
+                end
+            
+            end 
+        
+            % Manually select start row 
+            % Note: Due to behavioral performance, some subject blocks are
+            % excluded from analyses. Values indicate is the log_data row
+            % number that were determined by reviewing the log file.
+    
+            % Note: Behavioral analysis skipped block 1 of file 2 for P7 - not doing this
+            % here for EyeLink analyses because non-target data are still
+            % usable. Will exclude the target/distractor data. 
+    
+            % Note: Skipping blocks 1 and 2
+            if isequal(subID,'P5') && file == 1
+        
+                main_task_phase_onset = 900;
+        
+            % Note: Skipping blocks 1, 2, 3 
+            elseif isequal(subID,'P5') && file == 2
+        
+                main_task_phase_onset = 1438;
+    
+            % Note: Skipping blocks 1 and 2
+            elseif isequal(subID,'P6') && file == 1
+    
+                main_task_phase_onset = 917;
+    
+            end
+            
+            % Check if button condition found
+            % Note: Button condition determines which keys the participant was
+            % instructed to select when they perceived a distractor
+            if ~exist('button_condition','var')
+        
+               warning('Button condition variable missing!')
+        
+            end
+        
+            % Define end log row search range
+            if ~isempty(perception_phase_onset)
+            
+                main_end_row = perception_phase_onset;
+            
+            % End of log file
+            else
+            
+                main_end_row = length(log_data);
+            
+            end
+            
+            % Define end log row search range
+            if ~isempty(afterimage_phase_onset)
+            
+                perception_end_row = afterimage_phase_onset;
+            
+            % End of log file
+            else
+            
+                perception_end_row = length(log_data);
+            
+            end
+            
+            %% Main Task Phase
+    
+            % Initialize subject-file event variables for each file
+            glare_location_array = [];
+            nonglare_location_array = [];
+            iso_location_array = [];
+            white_location_array = [];
+            distractor_location_array = [];
+            all_stimuli_type_array = [];
+            
+            right_stimulus_location = {};
+            left_stimulus_location = {};
+    
+            % Task version v8 varaibles
+            distractor_plus_location_array = [];
+            distractor_cross_location_array = [];
+    
+            % Find stimuli location arrays
+            
+            % Loop among main phase rows
+            for row = main_task_phase_onset:main_end_row
+            
+                % All stimuli type array
+                if any(~cellfun('isempty',strfind(log_data(row),'All Stimuli Type Array')))
+            
+                    % Extract row string
+                    row_string = cell2mat(log_data(row));
+            
+                    % Bracket index
+                    bracket_1 = strfind(row_string,'[');
+                    bracket_2 = strfind(row_string,']');
+            
+                    % If end bracket not found
+                    if isempty(bracket_2)
+            
+                        row_string_2 = cell2mat(log_data(row+1));
+                        
+                        bracket_2 = strfind(row_string_2,']');
+            
+                    end
+            
+                    % Locations
+                    if ~isempty(row_string_2)
+            
+                        % Setup arrays to combine
+                        array_1 = row_string(bracket_1:end);
+                        array_2 = row_string_2(1:bracket_2);
+            
+                        % Combine arrays
+                        location_array = str2num([array_1,array_2]);
+            
+                    else
+                    
+                        location_array = str2num(row_string(bracket_1:bracket_2));
+            
+                    end
+            
+                    % Add block location array
+                    all_stimuli_type_array = [all_stimuli_type_array; location_array];
+            
+                % Glare stimulus array
+                elseif any(~cellfun('isempty',strfind(log_data(row),'Glare Stimuli Location Array')))
+            
+                    % Extract row string
+                    row_string = cell2mat(log_data(row));
+            
+                    % Bracket index
+                    bracket_1 = strfind(row_string,'[');
+                    bracket_2 = strfind(row_string,']');
+            
+                    % Locations
+                    location_array = str2num(row_string(bracket_1:bracket_2));
+            
+                    % Add block location array
+                    glare_location_array = [glare_location_array; location_array];
+            
+                % Nonglare stimulus array
+                % Note: Old version of the task had different naming of
+                % nonglare stimulus
+                elseif any(~cellfun('isempty',strfind(log_data(row),'Non Glare Stimuli Location Array'))) || ...
+                        any(~cellfun('isempty',strfind(log_data(row),'Nonglare Stimuli Location Array')))
+                   
+                    % Extract row string
+                    row_string = cell2mat(log_data(row));
+            
+                    % Bracket index
+                    bracket_1 = strfind(row_string,'[');
+                    bracket_2 = strfind(row_string,']');
+            
+                    % Locations
+                    location_array = str2num(row_string(bracket_1:bracket_2));
+            
+                    % Add block location array
+                    nonglare_location_array = [nonglare_location_array; location_array];
+            
+                % Iso stimulus array
+                elseif any(~cellfun('isempty',strfind(log_data(row),'Iso Stimuli Location Array')))
+                   
+                    % Extract row string
+                    row_string = cell2mat(log_data(row));
+            
+                    % Bracket index
+                    bracket_1 = strfind(row_string,'[');
+                    bracket_2 = strfind(row_string,']');
+            
+                    % Locations
+                    location_array = str2num(row_string(bracket_1:bracket_2));
+            
+                    % Add block location array
+                    iso_location_array = [iso_location_array; location_array];
+            
+                % White stimulus array
+                elseif any(~cellfun('isempty',strfind(log_data(row),'White Stimuli Location Array')))
+                   
+                    % Extract row string
+                    row_string = cell2mat(log_data(row));
+            
+                    % Bracket index
+                    bracket_1 = strfind(row_string,'[');
+                    bracket_2 = strfind(row_string,']');
+            
+                    % Locations
+                    location_array = str2num(row_string(bracket_1:bracket_2));
+            
+                    % Add block location array
+                    white_location_array = [white_location_array; location_array];
+            
+                % Distractor stimulus array
+                % Note: This is relevant for an earlier task version (v7) without
+                % the cross/plus distractor types
+                elseif any(~cellfun('isempty',strfind(log_data(row),'Distractor Stimuli Location Array')))
+    
+                    % Extract row string
+                    row_string = cell2mat(log_data(row));
+            
+                    % Bracket index
+                    bracket_1 = strfind(row_string,'[');
+                    bracket_2 = strfind(row_string,']');
+            
+                    % Locations
+                    location_array = str2num(row_string(bracket_1:bracket_2));
+            
+                    % Add block location array
+                    distractor_location_array = [distractor_location_array; location_array];
+            
+                % Distractor stimulus plus array
+                elseif any(~cellfun('isempty',strfind(log_data(row),'Distractor Plus Stimuli Location Array')))
+                   
+                    % Extract row string
+                    row_string = cell2mat(log_data(row));
+            
+                    % Bracket index
+                    bracket_1 = strfind(row_string,'[');
+                    bracket_2 = strfind(row_string,']');
+            
+                    % Locations
+                    location_array = str2num(row_string(bracket_1:bracket_2));
+            
+                    % Add block location array
+                    distractor_plus_location_array = [distractor_plus_location_array; location_array];
+            
+                % Distractor stimulus plus array
+                elseif any(~cellfun('isempty',strfind(log_data(row),'Distractor Cross Stimuli Location Array')))
+                   
+                    % Extract row string
+                    row_string = cell2mat(log_data(row));
+            
+                    % Bracket index
+                    bracket_1 = strfind(row_string,'[');
+                    bracket_2 = strfind(row_string,']');
+            
+                    % Locations
+                    location_array = str2num(row_string(bracket_1:bracket_2));
+            
+                    % Add block location array
+                    distractor_cross_location_array = [distractor_cross_location_array; location_array];
+            
+                % Right stimulus location
+                elseif any(~cellfun('isempty',strfind(log_data(row),'Right Stimulus Location')))
+            
+                    % Extract row string
+                    loc = cell2mat(log_data(row));
+            
+                    % Extract location
+                    values = loc(strfind(loc,'('):strfind(loc,')'));
+            
+                    % Locations
+                    right_stimulus_location = [right_stimulus_location; values];
+            
+                % Left stimulus location
+                elseif any(~cellfun('isempty',strfind(log_data(row),'Left Stimulus Location')))
+            
+                    % Extract row string
+                    loc = cell2mat(log_data(row));
+            
+                    % Extract location
+                    values = loc(strfind(loc,'('):strfind(loc,')'));
+            
+                    % Locations
+                    left_stimulus_location = [left_stimulus_location; values];
+            
+                 end
+            
+            end
+            
+            %% EyeLink Analysis
+            
+            % Load EDF/Mat
+            
+            % Find directories with log extension
+            % Note: Several conditions are defined to properly relate each EDF
+            % file with a behavioral log file in cases when there are mulitple
+            % log files.
+            if ismember(subID,{'P5'}) && file == 2
+    
+                eyelink_file = [subID,'_Perception_Task_Behavior_File_Session_2.mat']; 
+    
+            elseif ismember(subID,{'P8'}) && file == 1
+    
+                eyelink_file = [subID,'_Perception_Task_Behavior_File_Session_1.mat']; 
+    
+            elseif isequal(session_type, 'MEG') 
+    
+                eyelink_file = [subID,'_Perception_Task_MEG_Session_',num2str(file),'.mat'];
+    
+            else
+    
+                eyelink_file = [subID,'_Perception_Task_',num2str(file),'.mat'];
+    
+            end
+            
+            % Note: May need to use different laptop to open edf file because it
+            % crashes on the NIH laptop.
+            
+            % Load edf data
+            disp('Loading EDF data...')
+    
+            try
+            
+                load(fullfile(eyelink_dir,eyelink_file))
+    
+            catch
+    
+                error('EyeLink file does not exist!')
+    
+            end
+            
+            %% Extract Event Times
+            
+            % Time stamps
+            time = edf_data.FSAMPLE.time';
+            
+            % Pupil data (either area or diameter depending on recording settings)
+            pupil_data = edf_data.FSAMPLE.pa(num_eye,:);
+            
+            % Gaze X and Y
+            gaze_Y_org = edf_data.FSAMPLE.gy(num_eye,:);
+            gaze_X_org = edf_data.FSAMPLE.gx(num_eye,:);
+            
+            % Messages (event type 24 are behavior task messages)
+            message_events_index = [edf_data.FEVENT(:).type]' == 24;
+            message_events = edf_data.FEVENT(:,message_events_index);
+            
+            % Find task phases
+            start_main_phase = find(strcmp({message_events(:).message}','Starting Glare Illusion Main Phase'));
+            start_perception_phase = find(strcmp({message_events(:).message}','Starting Glare Illusion Perception Phase'));
+            
+            % Manually select start row (row was selected by looking at the
+            % message_events structure and finding the block starts)
+            % Note: Skipping blocks 1 and 2
+            if isequal(subID,'P5') && file == 1
+        
+                start_main_phase = 597;
+        
+            % Note: Skipping blocks 1, 2, 3
+            elseif isequal(subID,'P5') && file == 2
+        
+                start_main_phase = 827;
+    
+            % Note: Skipping blocks 1 and 2
+            elseif isequal(subID,'P6') && file == 1
+        
+                start_main_phase = 586;
+    
+            % Note: Skipping block 1 only for distractor stimuli for subject
+            % P7 file 2
+             elseif isequal(subID,'P7') && file == 2
+             
+                 dont_consider_before = 261;
+             
+            end
+        
+            % Define end of EyeLink row search range
+            if ~isempty(start_perception_phase)
+            
+                main_end_row = start_perception_phase;
+            
+            % End of EyeLink
+            else
+            
+                main_end_row = length(message_events);
+            
+            end
+            
+            %% Find Events for Main Task Phase
+            
+            % Initialize variables
+            glare_right_idx = [];
+            glare_right = [];
+            glare_left_idx = [];
+            glare_left = [];
+            
+            nonglare_right_idx = [];
+            nonglare_right = [];
+            nonglare_left_idx = [];
+            nonglare_left = [];
+            
+            iso_right_idx = [];
+            iso_right = [];
+            iso_left_idx = [];
+            iso_left = [];
+            
+            white_right_idx = [];
+            white_right = [];
+            white_left_idx = [];
+            white_left = [];
+            
+            distractor_right_idx = [];
+            distractor_right = [];
+            distractor_left_idx = [];
+            distractor_left = [];
+            
+            distractor_right_RT = [];
+            distractor_left_RT = [];
+             
+            perceived_left_distractor = [];
+            perceived_right_distractor = [];
+            
+            % Cut main task events from EyeLink file
+            main_events = message_events(start_main_phase:main_end_row);
+            
+            % Find stimuli events
+            for row = 1:length(main_events)
+            
+                % Find block number
+                if strfind(main_events(row).message,'Block #')
+            
+                    % Row string
+                    row_string = main_events(row).message;
+            
+                    % Number index
+                    num_idx = strfind(row_string,'#');
+            
+                    % Extract block number
+                    block_num = str2num(row_string(num_idx+1:end));
+        
+                    % Update block number for P5 and P6
+                    % Note: First two blocks are excluded 
+                    if ismember(subID,{'P5','P6'}) && file == 1
+        
+                        block_num = block_num-2;
+    
+                    elseif ismember(subID,{'P5'}) && file == 2
+        
+                        block_num = block_num-3;
+                        
+                    end
+            
+                    % Reset trial counter for each block
+                    nonglare_trial_counter = 0;
+                    glare_trial_counter = 0;
+                    iso_trial_counter = 0;
+                    white_trial_counter = 0;
+                    distractor_trial_counter = 0;
+                    distractor_plus_trial_counter = 0;
+                    distractor_cross_trial_counter = 0;
+            
+                    % Continue to next row
+                    continue
+            
+                end
+            
+                % Find trials
+                if strfind(main_events(row).message,'Starting Trial')
+            
+                    % Nonglare
+                    if any(strfind(main_events(row+4).message,'Draw Nonglare Stimulus')) || ...
+                       any(strfind(main_events(row+4).message,'Draw Non-Glare Stimulus')) || ...
+                       any(strfind(main_events(row+3).message,'Draw Nonglare Stimulus')) % Special case for P5
+            
+                        % Trial counter
+                        nonglare_trial_counter = nonglare_trial_counter + 1;
+            
+                        % Left sided stimulus
+                        if nonglare_location_array(block_num,nonglare_trial_counter) == 0
+            
+                            nonglare_left = [nonglare_left; main_events(row+4).sttime];
+                            nonglare_left_idx = find(ismember(time, nonglare_left));
+            
+                        % Right sided stimulus
+                        elseif nonglare_location_array(block_num,nonglare_trial_counter) == 1
+    
+                            % Special case for P5, block 1, file 2, first event
+                            if isequal(subID,'P5') && isequal(file,2) && ...
+                                    isequal(block_num, 1) && isequal(nonglare_trial_counter,1)
+                                
+                                nonglare_right = [nonglare_right; main_events(row+3).sttime];
+    
+                            else
+                                
+                                nonglare_right = [nonglare_right; main_events(row+4).sttime];
+    
+                            end
+    
+                            nonglare_right_idx = find(ismember(time, nonglare_right));
+            
+                        else
+            
+                            error('Wrong location!')
+            
+                        end
+            
+                    % Glare
+                    elseif strfind(main_events(row+4).message,'Draw Glare Stimulus')
+                     
+                        % Trial counter
+                        glare_trial_counter = glare_trial_counter + 1;
+            
+                        % Left sided stimulus
+                        if glare_location_array(block_num,glare_trial_counter) == 0
+            
+                            glare_left = [glare_left; main_events(row+4).sttime];
+                            glare_left_idx = find(ismember(time, glare_left));
+            
+                        % Right sided stimulus
+                        elseif glare_location_array(block_num,glare_trial_counter) == 1
+            
+                            glare_right = [glare_right; main_events(row+4).sttime];
+                            glare_right_idx = find(ismember(time, glare_right));
+            
+                        else
+            
+                            error('Wrong location!')
+            
+                        end
+            
+                    % Iso
+                    elseif strfind(main_events(row+4).message,'Draw Iso Stimulus')
+                        
+                        % Trial counter
+                        iso_trial_counter = iso_trial_counter + 1;
+            
+                        % Left sided stimulus
+                        if iso_location_array(block_num,iso_trial_counter) == 0
+            
+                            iso_left = [iso_left; main_events(row+4).sttime];
+                            iso_left_idx = find(ismember(time, iso_left));
+            
+                        % Right sided stimulus
+                        elseif iso_location_array(block_num,iso_trial_counter) == 1
+            
+                            iso_right = [iso_right; main_events(row+4).sttime];
+                            iso_right_idx = find(ismember(time, iso_right));
+            
+                        else
+            
+                            error('Wrong location!')
+            
+                        end
+            
+                    % White
+                    elseif any(strfind(main_events(row+4).message,'Draw White Stimulus')) || ...
+                       any(strfind(main_events(row+3).message,'Draw White Stimulus')) % Special case for P6
+                        
+                        % Trial counter
+                        white_trial_counter = white_trial_counter + 1;
+            
+                        % Left sided stimulus
+                        if white_location_array(block_num,white_trial_counter) == 0
+    
+                            % Special case for P6, block 10, file 1, first event
+                            if isequal(subID,'P6') && isequal(file,1) && ...
+                                    isequal(block_num, 10) && isequal(white_trial_counter,1)
+                                
+                                white_left = [white_left; main_events(row+3).sttime];
+    
+                            else
+            
+                                white_left = [white_left; main_events(row+4).sttime];
+    
+                            end
+                            
+                            white_left_idx = find(ismember(time, white_left));
+            
+                        % Right sided stimulus
+                        elseif white_location_array(block_num,white_trial_counter) == 1
+            
+                            white_right = [white_right; main_events(row+4).sttime];
+                            white_right_idx = find(ismember(time, white_right));
+            
+                        else
+            
+                            error('Wrong location!')
+            
+                        end
+            
+                    % Distractor
+                    elseif strfind(main_events(row+4).message,'Draw Distractor Stimulus') 
+                        
+                        % Trial counter
+                        distractor_trial_counter = distractor_trial_counter + 1;
+            
+                        % Left sided stimulus
+                        if distractor_location_array(block_num,distractor_trial_counter) == 0
+            
+                            % Perceived
+                            % Note: Percieved distractor is a EyeLink message
+                            % that is sent if a 1 or 2 button press is detected
+                            % in the interval of the stimulus presentation
+                            if strfind(main_events(row+5).message,'Perceived Distractor')
+            
+                                perceived_left_distractor = [perceived_left_distractor, 1];
+                                distractor_left_RT = [distractor_left_RT; main_events(row+5).sttime-main_events(row+4).sttime];
+            
+                            % Not perceived
+                            else
+            
+                                perceived_left_distractor = [perceived_left_distractor, 0];
+            
+                            end
+            
+                            distractor_left = [distractor_left; main_events(row+4).sttime];
+                            distractor_left_idx = find(ismember(time, distractor_left));
+            
+                        % Right sided stimulus
+                        elseif distractor_location_array(block_num,distractor_trial_counter) == 1
+            
+                            % Perceived
+                            if strfind(main_events(row+5).message,'Perceived Distractor')
+            
+                                perceived_right_distractor = [perceived_right_distractor, 1];
+                                distractor_right_RT = [distractor_right_RT; main_events(row+5).sttime-main_events(row+4).sttime];
+            
+                            % Not perceived
+                            else
+            
+                                perceived_right_distractor = [perceived_right_distractor, 0];
+            
+                            end
+            
+                            distractor_right = [distractor_right; main_events(row+4).sttime];
+                            distractor_right_idx = find(ismember(time, distractor_right));
+            
+                        else
+            
+                            error('Wrong location!')
+            
+                        end
+            
+                    % Distractor Plus
+                    elseif strfind(main_events(row+4).message,'Draw Distractor Plus Stimulus') 
+    
+                        % Special case P7 - not considered during first block
+                        if isequal(subID,'P7') && isequal(file,2) && row+4 < dont_consider_before
+    
+                            % Note: Skipping distractor events during the first
+                            % block of the send behavioral/EyeLink file.
+                            continue
+    
+                        end
+                        
+                        % Trial counter
+                        distractor_plus_trial_counter = distractor_plus_trial_counter + 1;
+            
+                        % Left sided stimulus
+                        if distractor_plus_location_array(block_num,distractor_plus_trial_counter) == 0 
+    
+                            % Perceived
+                            if strfind(main_events(row+5).message,'Perceived Distractor')
+            
+                                perceived_left_distractor = [perceived_left_distractor, 1];
+                                distractor_left_RT = [distractor_left_RT; main_events(row+5).sttime-main_events(row+4).sttime];
+            
+                            % Not perceived
+                            else
+            
+                                perceived_left_distractor = [perceived_left_distractor, 0];
+    
+                            end
+            
+                            distractor_left = [distractor_left; main_events(row+4).sttime];
+                            distractor_left_idx = find(ismember(time, distractor_left));
+            
+                        % Right sided stimulus
+                        elseif distractor_plus_location_array(block_num,distractor_plus_trial_counter) == 1
+            
+                            % Perceived right stimulus
+                            if strfind(main_events(row+5).message,'Perceived Distractor')
+            
+                                perceived_right_distractor = [perceived_right_distractor, 1];
+                                distractor_right_RT = [distractor_right_RT; main_events(row+5).sttime-main_events(row+4).sttime];
+            
+                            % Not perceived
+                            else
+            
+                                perceived_right_distractor = [perceived_right_distractor, 0];
+                                     
+                            end
+            
+                            distractor_right = [distractor_right; main_events(row+4).sttime];
+                            distractor_right_idx = find(ismember(time, distractor_right));
+            
+                        else
+            
+                            error('Wrong location!')
+            
+                        end
+                    
+                    % Distractor Cross
+                    elseif strfind(main_events(row+4).message,'Draw Distractor Cross Stimulus') 
+    
+                        % Special case P7 - not considered during first block
+                        if isequal(subID,'P7') && isequal(file,2) && row+4 < dont_consider_before
+    
+                            % Note: Skipping distractor events during the first
+                            % block of the send behavioral/EyeLink file.
+                            continue
+    
+                        end
+                        
+                        % Trial counter
+                        distractor_cross_trial_counter = distractor_cross_trial_counter + 1;
+            
+                        % Left sided stimulus
+                        if distractor_cross_location_array(block_num,distractor_cross_trial_counter) == 0
+            
+                            % Perceived
+                            if strfind(main_events(row+5).message,'Perceived Distractor')
+            
+                                perceived_left_distractor = [perceived_left_distractor, 1];
+                                distractor_left_RT = [distractor_left_RT; main_events(row+5).sttime-main_events(row+4).sttime];
+    
+                            % Not perceived
+                            else
+            
+                                perceived_left_distractor = [perceived_left_distractor, 0];
+    
+                            end
+            
+                            distractor_left = [distractor_left; main_events(row+4).sttime];
+                            distractor_left_idx = find(ismember(time, distractor_left));
+            
+                        % Right sided stimulus
+                        elseif distractor_cross_location_array(block_num,distractor_cross_trial_counter) == 1
+            
+                            % Perceived
+                            if strfind(main_events(row+5).message,'Perceived Distractor')
+            
+                                perceived_right_distractor = [perceived_right_distractor, 1];
+                                distractor_right_RT = [distractor_right_RT; main_events(row+5).sttime-main_events(row+4).sttime];
+    
+                            % Not perceived
+                            else
+            
+                                perceived_right_distractor = [perceived_right_distractor, 0];
+            
+                            end
+            
+                            distractor_right = [distractor_right; main_events(row+4).sttime];
+                            distractor_right_idx = find(ismember(time, distractor_right));
+            
+                        else
+            
+                            error('Wrong location!')
+            
+                        end
+    
+                    else
+    
+                        % Special case for subject C6
+                        if isequal(subID,'C6') && isequal(block_num,7)
+    
+                            warning('Missing draw message!')
+    
+                        else
+    
+                            error('Could not find draw condition!')
+                    
+                        end
+    
+                    end
+            
+                end
+            
+            end
+            
+            %% Find all left and right stimuli
+    
+            % Find task events in time
+            glare_left_right = [main_events(find(strcmp({main_events.message}','Draw Glare Stimulus'))).sttime]';
+            glare_left_right_idx = find(ismember(time, glare_left_right));
+            
+            % Note: Check for slighlty different naming Non-Glare Nonglare
+            if ~isempty(find(strcmp({main_events.message}','Draw Non-Glare Stimulus')))
+        
+                nonglare_left_right = [main_events(find(strcmp({main_events.message}','Draw Non-Glare Stimulus'))).sttime]';
+            
+            else
+        
+                nonglare_left_right = [main_events(find(strcmp({main_events.message}','Draw Nonglare Stimulus'))).sttime]';
+        
+            end
+        
+            nonglare_left_right_idx = find(ismember(time, nonglare_left_right));
+            
+            iso_left_right = [main_events(find(strcmp({main_events.message}','Draw Iso Stimulus'))).sttime]';
+            iso_left_right_idx = find(ismember(time, iso_left_right));
+            
+            white_left_right = [main_events(find(strcmp({main_events.message}','Draw White Stimulus'))).sttime]';
+            white_left_right_idx = find(ismember(time, white_left_right));
+            
+            distractor_left_right = [main_events(find(contains({main_events.message}','Draw Distractor'))).sttime]';
+            distractor_left_right_idx = find(ismember(time, distractor_left_right));
+    
+            % Special case P7 - Remove first block distractor events
+            if isequal(subID,'P7') && isequal(file,2)
+    
+                % Remove the first 8 events corresponding with block 1
+                distractor_left_right(1:8) = []; 
+                distractor_left_right_idx(1:8) = [];
+    
+            end
+    
+            % Check equal number of left and right events
+            if ~isequal(length(glare_left_idx),length(glare_right_idx)) || ...
+                ~isequal(length(nonglare_left_idx),length(nonglare_right_idx)) || ...
+                ~isequal(length(iso_left_idx),length(iso_right_idx)) || ...
+                ~isequal(length(white_left_idx),length(white_right_idx)) || ...
+                ~isequal(length(distractor_left_idx),length(distractor_right_idx))
+    
+                % Special case for C6, file #1 where the task crashed
+                if isequal(subID,'C6') && isequal(file, 1)
+    
+                else
+    
+                    error('Mistmatch # of left and right indices!')
+    
+                end
+    
+            end
+    
+            % Check that the left+right matrices are correct
+            if isequal(session_type,'MEG')
+    
+                if ~isequal(glare_left_right_idx,sort([glare_left_idx;glare_right_idx])) || ...
+                    ~isequal(nonglare_left_right_idx,sort([nonglare_left_idx;nonglare_right_idx])) || ...
+                    ~isequal(distractor_left_right_idx,sort([distractor_left_idx;distractor_right_idx]))
+        
+                    error('Left+right idx do not match left and right only!')
+        
+                end
+    
+            else
+               
+                if ~isequal(glare_left_right_idx,sort([glare_left_idx;glare_right_idx])) || ...
+                    ~isequal(nonglare_left_right_idx,sort([nonglare_left_idx;nonglare_right_idx])) || ...
+                    ~isequal(iso_left_right_idx,sort([iso_left_idx;iso_right_idx])) || ...
+                    ~isequal(white_left_right_idx,sort([white_left_idx;white_right_idx])) || ...
+                    ~isequal(distractor_left_right_idx,sort([distractor_left_idx;distractor_right_idx]))
+        
+                    error('Left+right idx do not match left and right only!')
+        
+                end
+    
+            end
+    
+            %% ISI event index
+            % Note: These are between event intervals that are selected by
+            % counting a random interval of time from stimuli.
+    
+            % Create array of random ISI intervals from stimulus index
+            glare_right_ISI_time = randi(ISI_event_time,length(glare_right_idx),1);
+            nonglare_right_ISI_time = randi(ISI_event_time,length(nonglare_right_idx),1);
+            iso_right_ISI_time = randi(ISI_event_time,length(iso_right_idx),1);
+            white_right_ISI_time = randi(ISI_event_time,length(white_right_idx),1);
+    
+            glare_left_ISI_time = randi(ISI_event_time,length(glare_left_idx),1);
+            nonglare_left_ISI_time = randi(ISI_event_time,length(nonglare_left_idx),1);
+            iso_left_ISI_time = randi(ISI_event_time,length(iso_left_idx),1);
+            white_left_ISI_time = randi(ISI_event_time,length(white_left_idx),1);
+    
+            distractor_right_ISI_time = randi(ISI_event_time,length(distractor_right_idx),1);
+            distractor_left_ISI_time = randi(ISI_event_time,length(distractor_left_idx),1);
+    
+            % ISI all stimuli
+            % Note: The null event is the ISI period.
+    
+            % ISI distractor
+            ISI_distractor_left_right_idx = [distractor_right_idx+distractor_right_ISI_time; distractor_left_idx+distractor_left_ISI_time];
+            ISI_distractor_right_idx = [distractor_right_idx+distractor_right_ISI_time];
+            ISI_distractor_left_idx = [distractor_left_idx+distractor_left_ISI_time];
+    
+            % ISI glare
+            ISI_glare_left_right_idx = [glare_right_idx+glare_right_ISI_time; glare_left_idx+glare_left_ISI_time];
+            ISI_glare_right_idx = [glare_right_idx+glare_right_ISI_time];      
+            ISI_glare_left_idx = [glare_left_idx+glare_left_ISI_time];
+    
+            % ISI nonglare
+            ISI_nonglare_left_right_idx = [nonglare_right_idx+nonglare_right_ISI_time; nonglare_left_idx+nonglare_left_ISI_time];
+            ISI_nonglare_right_idx = [nonglare_right_idx+nonglare_right_ISI_time];      
+            ISI_nonglare_left_idx = [nonglare_left_idx+nonglare_left_ISI_time];
+    
+            % ISI white
+            ISI_white_left_right_idx = [white_right_idx+white_right_ISI_time; white_left_idx+white_left_ISI_time];
+            ISI_white_right_idx = [white_right_idx+white_right_ISI_time];      
+            ISI_white_left_idx = [white_left_idx+white_left_ISI_time];
+    
+            % ISI white
+            ISI_iso_left_right_idx = [iso_right_idx+iso_right_ISI_time; iso_left_idx+iso_left_ISI_time];
+            ISI_iso_right_idx = [iso_right_idx+iso_right_ISI_time];      
+            ISI_iso_left_idx = [iso_left_idx+iso_left_ISI_time];
+    
+            % ISI glare nonglare white
+            ISI_glare_nonglare_white_left_right_idx = [ISI_glare_right_idx; ISI_nonglare_right_idx; ISI_white_right_idx;...
+                ISI_glare_left_idx; ISI_nonglare_left_idx; ISI_white_left_idx];
+            ISI_glare_nonglare_white_right_idx = [ISI_glare_right_idx; ISI_nonglare_right_idx; ISI_white_right_idx];      
+            ISI_glare_nonglare_white_left_idx = [ISI_glare_left_idx; ISI_nonglare_left_idx; ISI_white_left_idx];
+    
+            % ISI glare nonglare white iso
+            ISI_glare_nonglare_white_iso_left_right_idx = [ISI_glare_right_idx; ISI_nonglare_right_idx; ISI_white_right_idx; ISI_iso_right_idx;...
+                ISI_glare_left_idx; ISI_nonglare_left_idx; ISI_white_left_idx; ISI_iso_left_idx];
+            ISI_glare_nonglare_white_iso_right_idx = [ISI_glare_right_idx; ISI_nonglare_right_idx; ISI_white_right_idx; ISI_iso_right_idx];      
+            ISI_glare_nonglare_white_iso_left_idx = [ISI_glare_left_idx; ISI_nonglare_left_idx; ISI_white_left_idx; ISI_iso_left_idx];
+    
+            %% Stublink Preprocessing
+            
+            disp('Preprocessing data...')
+        
+            % Pupil size correction value
+            % Note: This correction is required for stublinks to work properly
+            correction_value = 1000;
+            
+            % Update pupil size
+            pupil_data = pupil_data/correction_value;
+            
+            % Stublinks
+            [processed_pupil_data, blink_data] = Stublinks60(pupil_data,sampling_rate);
+            
+            % Return data to original scale
+            processed_pupil_data = processed_pupil_data*correction_value;
+            
+            % Smooth proccessed pupil data
+            processed_pupil_data = movmean(processed_pupil_data,pupil_smoothing_span);
+    
+            %% Saccade/Microsaccade Detection
+            
+            % Calculate velocity/acceleration using 5-sample window 
+            % (https://github.com/sj971/neurosci-saccade-detection/blob/master/analyzeEyeData.m)
+            % See Engbert and Kliegl, 2003. Denominator accounts for the
+            % six sample 'differences' used in numerator (i.e., n-2 to
+            % n+2 = 4 samples, n-1 to n+1 = 2 samples).
+            
+            % Conversion to Deg
+            % subtract center of screen (1024/2, 768/2)
+            % Y data is inverted
+            gaze_X = gaze_X_org-512;
+            gaze_Y = gaze_Y_org-384;
+            
+            % Convert to mm, using pixel pitch (gotten from the monitor
+            % manufacturer's website) = .254mm per pixel
+            gaze_X = gaze_X*(.254);
+            gaze_Y = gaze_Y*(.254);
+            
+            % Convert to deg (spherical coordinates)
+            gaze_X = atand(gaze_X/550);
+            gaze_Y = atand(gaze_Y/550);
+            
+            % Check vector length
+            if ~isequal(size(blink_data), size(gaze_Y), size(gaze_X))
+            
+                error('Blink and gaze data size mismatch!')
+            
+            end
+            
+            % Remove blink times from data
+            gaze_X_noblink = gaze_X;
+            gaze_X_noblink(blink_data) = nan;
+            gaze_Y_noblink = gaze_Y;
+            gaze_Y_noblink(blink_data) = nan;
+            
+            % Interpolate over blinks
+            gaze_X_noblink = naninterp(gaze_X_noblink);
+            gaze_Y_noblink = naninterp(gaze_Y_noblink);
+            
+            % EK Method (Input: X and Y gaze data [matrix: 2 x time], sampling rate, microsac threshold, microsac min duration)
+            % Note: allSac ouput contents
+            [allSac,msdx1,msdy1,stddevL,maddevL] = GetMicrosaccadesEK([gaze_X_noblink;gaze_Y_noblink],1000,5,5,blink_data);
+            
+            % Create a saccade data vector
+            saccade_data = zeros(1,size(blink_data,2));
+            
+            % Loop over all saccades
+            for n = 1:length(allSac)
+            
+                saccade_data(allSac(n,1):allSac(n,2)) = 1;
+            
+            end
+            
+            % Get microsaccades only
+            microsac_thres = 1;
+            
+            % Initialize variables
+            microsac_idx = [];
+            
+            % Loop over all saccades
+            for j = 1:size(allSac,1)
+            
+               % Find if saccade is within microsac threshold
+               if sqrt(allSac(j,6)^2 + allSac(j,7)^2) < microsac_thres
+               
+                   microsac_idx = [microsac_idx; j]; 
+            
+               end
+            
+            end
+            
+            % Store all microsaccade information
+            allMicrosac = allSac(microsac_idx,:);
+            
+            % Create a microsaccade data vector
+            microsaccade_data = zeros(1,size(blink_data,2));
+            
+            % Loop over all microsaccades
+            for n = 1:length(allMicrosac)
+            
+                microsaccade_data(allMicrosac(n,1):allMicrosac(n,2)) = 1;
+            
+            end
+    
+            % Visualization check on finding saccades/microsaccades
+            if isequal(create_visualizations, 'y')
+    
+                figure
+                hold on
+        
+                plot(gaze_Y_noblink)
+                scatter(allSac(:,1),gaze_Y_noblink(allSac(:,1)));
+                
+            end
+    
+            %% Cut Event Epochs 
+            
+            % Define event types
+            if isequal(session_type, 'MEG')
+    
+                event_types = {'glare_left_right','glare_left','glare_right',...
+                'nonglare_left_right','nonglare_left','nonglare_right',...
+                'distractor_left_right','distractor_right','distractor_left',...
+                'ISI_distractor_left_right','ISI_distractor_left','ISI_distractor_right',...
+                'ISI_glare_nonglare_white_left_right','ISI_glare_nonglare_white_left','ISI_glare_nonglare_white_right',...
+                'ISI_glare_nonglare_white_iso_left_right','ISI_glare_nonglare_white_iso_left','ISI_glare_nonglare_white_iso_right',...
+                'ISI_glare_left_right','ISI_glare_left','ISI_glare_right','ISI_nonglare_left_right','ISI_nonglare_left','ISI_nonglare_right'};
+            
+            else
+    
+                event_types = {'glare_left_right','glare_left','glare_right',...
+                    'nonglare_left_right','nonglare_left','nonglare_right',...
+                    'iso_left_right','iso_left','iso_right',...
+                    'white_left_right','white_left','white_right',...
+                    'distractor_left_right','distractor_right','distractor_left',...
+                    'ISI_distractor_left_right','ISI_distractor_left','ISI_distractor_right',...
+                    'ISI_glare_nonglare_white_left_right','ISI_glare_nonglare_white_left','ISI_glare_nonglare_white_right',...
+                    'ISI_glare_nonglare_white_iso_left_right','ISI_glare_nonglare_white_iso_left','ISI_glare_nonglare_white_iso_right',...
+                    'ISI_glare_left_right','ISI_glare_left','ISI_glare_right','ISI_nonglare_left_right','ISI_nonglare_left','ISI_nonglare_right',...
+                    'ISI_white_left_right','ISI_white_left','ISI_white_right','ISI_iso_left_right','ISI_iso_left','ISI_iso_right'};
+            
+            end
+    
+            % Loop over event types
+            for type = 1:length(event_types)
+            
+                % Reset variables
+                all_pupil_epochs = [];
+                all_blink_epochs = [];
+                all_saccade_epochs = [];
+                all_microsaccade_epochs = [];
+    
+                disp(['Running ',event_types{type},'...'])
+            
+                % Define current data index
+                current_event_idx = eval([event_types{type},'_idx']);
+            
+                % Loop over event stimuli
+                for event = 1:length(current_event_idx)
+            
+                    % If epoch start before onset of data
+                    if current_event_idx(event)-epoch_duration < 1 || current_event_idx(event)+epoch_duration > time(end)
+            
+                        error('Epoch length exceeds data!')
+                        
+                    else
+                               
+                        %% Baseline and Extract Epochs
+    
+                        % Calculate epoch baseline value
+                        baseline_pupil = nanmean(processed_pupil_data(current_event_idx(event)-baseline_duration:current_event_idx(event)-1));
+                
+                        % Cut epoch and baseline
+                        current_pupil_epoch = processed_pupil_data(current_event_idx(event)-epoch_duration:current_event_idx(event)+epoch_duration)-baseline_pupil;
+    
+                        % Cut epoch (no baseline)
+                        current_blink_epoch = blink_data(current_event_idx(event)-epoch_duration:current_event_idx(event)+epoch_duration);
+                        current_saccade_epoch = saccade_data(current_event_idx(event)-epoch_duration:current_event_idx(event)+epoch_duration);
+                        current_microsaccade_epoch = microsaccade_data(current_event_idx(event)-epoch_duration:current_event_idx(event)+epoch_duration);
+    
+                        %% Quality Control - Epoch removal
+    
+                        % Remove trials that are not 0s/1s
+                        % Relevant for blink/microssacades epochs
+                        if any(current_blink_epoch(query_interval) > 1) || any(current_blink_epoch(query_interval) < 0) || ...
+                                any(current_microsaccade_epoch(query_interval) > 1) || any(current_microsaccade_epoch(query_interval) < 0) 
+    
+                            % Set epochs to NaN
+                            current_blink_epoch = nan(1,size(current_blink_epoch,2));
+                            current_saccade_epoch = nan(1,size(current_saccade_epoch,2));
+                            current_microsaccade_epoch = nan(1,size(current_microsaccade_epoch,2));
+    
+                        end
+                         
+                        % Remove trials according to eye closure/lost tracking
+                        % Note: If more than half of the query interval is eyes
+                        % closed
+                        if sum(current_blink_epoch(query_interval))/length(query_interval) > blink_threshold
+    
+                            % Set epochs to NaN
+                            current_pupil_epoch = nan(1,size(current_pupil_epoch,2));
+                            current_blink_epoch = nan(1,size(current_blink_epoch,2));
+                            current_saccade_epoch = nan(1,size(current_saccade_epoch,2));
+                            current_microsaccade_epoch = nan(1,size(current_microsaccade_epoch,2));
+    
+                        end
+    
+                        % Remove pupil trials with extreme values 
+                        if any(abs(current_pupil_epoch(query_interval)) > pupil_extreme_threshold)
+    
+                            current_pupil_epoch = nan(1,size(current_pupil_epoch,2));
+    
+                        end
+    
+                        % Add epoch 
+                        all_pupil_epochs = [all_pupil_epochs; current_pupil_epoch];
+                        all_blink_epochs = [all_blink_epochs; current_blink_epoch];
+                        all_saccade_epochs = [all_saccade_epochs; current_saccade_epoch];
+                        all_microsaccade_epochs = [all_microsaccade_epochs; current_microsaccade_epoch];
+    
+                    end
+            
+                end
+    
+                % Rename variables
+                % Note: This allows for the addition of epochs across files
+                % without overwriting previous varialbes/epochs.
+            
+                % Only 1 file
+                % Note: Renaming is necessary because looping over other event
+                % types will overwrite the current epochs
+                if file_num == 1
+    
+                    % Rename variable
+                    eval([event_types{type},'_pupil_epochs = all_pupil_epochs;'])
+                    eval([event_types{type},'_blink_epochs = all_blink_epochs;'])
+                    eval([event_types{type},'_saccade_epochs = all_saccade_epochs;'])
+                    eval([event_types{type},'_microsaccade_epochs = all_microsaccade_epochs;'])
+    
+                % If 2 files are available and currently running file 1
+                elseif max(file_num) > 1 && file == 1
+    
+                    % Rename variable
+                    eval([event_types{type},'_pupil_epochs_file1 = all_pupil_epochs;'])
+                    eval([event_types{type},'_blink_epochs_file1 = all_blink_epochs;'])
+                    eval([event_types{type},'_saccade_epochs_file1 = all_saccade_epochs;'])
+                    eval([event_types{type},'_microsaccade_epochs_file1 = all_microsaccade_epochs;'])
+    
+                % If 3/4 files are available and currently running file 2
+                elseif ismember(max(file_num), [3,4]) && file == 2
+    
+                    % Rename variable
+                    eval([event_types{type},'_pupil_epochs_file2 = all_pupil_epochs;'])
+                    eval([event_types{type},'_blink_epochs_file2 = all_blink_epochs;'])
+                    eval([event_types{type},'_saccade_epochs_file2 = all_saccade_epochs;'])
+                    eval([event_types{type},'_microsaccade_epochs_file2 = all_microsaccade_epochs;'])
+    
+                % If 4 files are available and currently running file 3
+                elseif max(file_num) == 4 && file == 3
+    
+                    % Rename variable
+                    eval([event_types{type},'_pupil_epochs_file3 = all_pupil_epochs;'])
+                    eval([event_types{type},'_blink_epochs_file3 = all_blink_epochs;'])
+                    eval([event_types{type},'_saccade_epochs_file3 = all_saccade_epochs;'])
+                    eval([event_types{type},'_microsaccade_epochs_file3 = all_microsaccade_epochs;'])
+    
+                % If 2 files are available and currently running file 2
+                elseif max(file_num) == 2 && file == 2
+    
+                    % Combine epochs across files
+                    all_pupil_epochs = [eval([event_types{type},'_pupil_epochs_file1']); all_pupil_epochs];
+                    all_blink_epochs = [eval([event_types{type},'_blink_epochs_file1']); all_blink_epochs];
+                    all_saccade_epochs = [eval([event_types{type},'_saccade_epochs_file1']); all_saccade_epochs];
+                    all_microsaccade_epochs = [eval([event_types{type},'_microsaccade_epochs_file1']); all_microsaccade_epochs];
+            
+                    % Rename variable
+                    eval([event_types{type},'_pupil_epochs = all_pupil_epochs;'])
+                    eval([event_types{type},'_blink_epochs = all_blink_epochs;'])
+                    eval([event_types{type},'_saccade_epochs = all_saccade_epochs;'])
+                    eval([event_types{type},'_microsaccade_epochs = all_microsaccade_epochs;'])
+    
+                % If 3 files are available and currently running file 3
+                elseif max(file_num) == 3 && file == 3
+    
+                    % Combine epochs across files
+                    % Note: Special case for P7 without EyeLink data in file 1
+                    if isequal(subID,'P7')
+    
+                        all_pupil_epochs = [eval([event_types{type},'_pupil_epochs_file2']); all_pupil_epochs];
+                        all_blink_epochs = [eval([event_types{type},'_blink_epochs_file2']); all_blink_epochs];
+                        all_saccade_epochs = [eval([event_types{type},'_saccade_epochs_file2']); all_saccade_epochs];
+                        all_microsaccade_epochs = [eval([event_types{type},'_microsaccade_epochs_file2']); all_microsaccade_epochs];
+                       
+                    else
+    
+                        all_pupil_epochs = [eval([event_types{type},'_pupil_epochs_file1']); eval([event_types{type},'_pupil_epochs_file2']); all_pupil_epochs];
+                        all_blink_epochs = [eval([event_types{type},'_blink_epochs_file1']); eval([event_types{type},'_blink_epochs_file2']); all_blink_epochs];
+                        all_saccade_epochs = [eval([event_types{type},'_saccade_epochs_file1']); eval([event_types{type},'_saccade_epochs_file2']); all_saccade_epochs];
+                        all_microsaccade_epochs = [eval([event_types{type},'_microsaccade_epochs_file1']); eval([event_types{type},'_microsaccade_epochs_file2']); all_microsaccade_epochs];
+                        
+                    end
+    
+                    % Rename variable
+                    eval([event_types{type},'_pupil_epochs = all_pupil_epochs;'])
+                    eval([event_types{type},'_blink_epochs = all_blink_epochs;'])
+                    eval([event_types{type},'_saccade_epochs = all_saccade_epochs;'])
+                    eval([event_types{type},'_microsaccade_epochs = all_microsaccade_epochs;'])
+    
+                % If 4 files are available and currently running file 4
+                elseif max(file_num) == 4 && file == 4
+    
+                    % Combine epochs across files
+                    all_pupil_epochs = [eval([event_types{type},'_pupil_epochs_file1']); eval([event_types{type},'_pupil_epochs_file2']); eval([event_types{type},'_pupil_epochs_file3']); all_pupil_epochs];
+                    all_blink_epochs = [eval([event_types{type},'_blink_epochs_file1']); eval([event_types{type},'_blink_epochs_file2']); eval([event_types{type},'_blink_epochs_file3']); all_blink_epochs];
+                    all_saccade_epochs = [eval([event_types{type},'_saccade_epochs_file1']); eval([event_types{type},'_saccade_epochs_file2']); eval([event_types{type},'_saccade_epochs_file3']); all_saccade_epochs];
+                    all_microsaccade_epochs = [eval([event_types{type},'_microsaccade_epochs_file1']); eval([event_types{type},'_microsaccade_epochs_file2']); eval([event_types{type},'_microsaccade_epochs_file3']); all_microsaccade_epochs];
+            
+                    % Rename variable
+                    eval([event_types{type},'_pupil_epochs = all_pupil_epochs;'])
+                    eval([event_types{type},'_blink_epochs = all_blink_epochs;'])
+                    eval([event_types{type},'_saccade_epochs = all_saccade_epochs;'])
+                    eval([event_types{type},'_microsaccade_epochs = all_microsaccade_epochs;'])
+    
+                end
+    
+                %% Once all epochs for all files are extracted ...
+    
+                % Average and SEM after all files are considered
+                if max(file_num) == file
+    
+                    % Reset variables
+                    all_pupil_epochs = [];
+                    all_blink_epochs = [];
+                    all_saccade_epochs = [];
+                    all_microsaccade_epochs = [];
+    
+                    % Select and rename correct epochs
+                    all_pupil_epochs = eval([event_types{type},'_pupil_epochs;']);
+                    all_blink_epochs = eval([event_types{type},'_blink_epochs;']);
+                    all_saccade_epochs = eval([event_types{type},'_saccade_epochs;']);
+                    all_microsaccade_epochs = eval([event_types{type},'_microsaccade_epochs;']);
+    
+                    % Check how many trials were removed
+                    pupil_trials_removed = length(find(isnan(all_pupil_epochs(:,1))))/size(all_pupil_epochs,1)*100;
+                    blink_trials_removed = length(find(isnan(all_blink_epochs(:,1))))/size(all_blink_epochs,1)*100;
+                    saccade_trials_removed = length(find(isnan(all_saccade_epochs(:,1))))/size(all_saccade_epochs,1)*100;
+                    microsaccade_trials_removed = length(find(isnan(all_microsaccade_epochs(:,1))))/size(all_microsaccade_epochs,1)*100;
+    
+                    % Error if too many trials removed
+                    if pupil_trials_removed > num_trials_removed_threshold || ...
+                           blink_trials_removed > num_trials_removed_threshold || ...
+                           saccade_trials_removed > num_trials_removed_threshold|| ...
+                           microsaccade_trials_removed > num_trials_removed_threshold
+    
+                        error([event_types{type},' - Many trials removed!'])
+    
+                    end
+    
+                    % Remove NaN trials from epoch variable
+                    clean_pupil_epochs = all_pupil_epochs(~isnan(all_pupil_epochs(:,1)),:);
+                    clean_blink_epochs = all_blink_epochs(~isnan(all_blink_epochs(:,1)),:);
+                    clean_saccade_epochs = all_saccade_epochs(~isnan(all_saccade_epochs(:,1)),:);
+                    clean_microsaccade_epochs = all_microsaccade_epochs(~isnan(all_microsaccade_epochs(:,1)),:);
+    
+                    % Average over trials; smooth blink, saccade, microsaccade data
+                    mean_pupil = nanmean(clean_pupil_epochs,1);
+                    mean_blink = movmean(nanmean(clean_blink_epochs,1),blink_saccade_smoothing_span);
+                    mean_saccade = movmean(nanmean(clean_saccade_epochs,1),blink_saccade_smoothing_span);
+                    mean_microsaccade = movmean(nanmean(clean_microsaccade_epochs,1),blink_saccade_smoothing_span);
+    
+                    % Calculate SEM; smooth blink, saccade, microsaccade data
+                    SEM_pupil = std(clean_pupil_epochs,1)/sqrt(size(clean_pupil_epochs,1));
+                    SEM_blink = movmean((std(clean_blink_epochs,1)/sqrt(size(clean_blink_epochs,1))),blink_saccade_smoothing_span);
+                    SEM_saccade = movmean((std(clean_saccade_epochs,1)/sqrt(size(clean_saccade_epochs,1))),blink_saccade_smoothing_span);
+                    SEM_microsaccade = movmean((std(clean_microsaccade_epochs,1)/sqrt(size(clean_microsaccade_epochs,1))),blink_saccade_smoothing_span);
+    
+                    % Confirm the SEM values do not have NaN
+                    if any(isnan(SEM_pupil)) || any(isnan(SEM_blink)) || any(isnan(SEM_microsaccade))
+    
+                        error('NaN values in SEM matrices!')
+    
+                    end
+    
+                    % Rename variables
+                    eval([event_types{type},'_pupil_epochs = all_pupil_epochs;'])
+                    eval([event_types{type},'_blink_epochs = all_blink_epochs;'])
+                    eval([event_types{type},'_saccade_epochs = all_saccade_epochs;'])
+                    eval([event_types{type},'_microsaccade_epochs = all_microsaccade_epochs;'])
+    
+                    eval(['mean_',event_types{type},'_pupil = mean_pupil;'])
+                    eval(['mean_',event_types{type},'_blink = mean_blink;'])
+                    eval(['mean_',event_types{type},'_saccade = mean_saccade;'])
+                    eval(['mean_',event_types{type},'_microsaccade = mean_microsaccade;'])
+    
+                    eval(['SEM_',event_types{type},'_pupil = SEM_pupil;'])
+                    eval(['SEM_',event_types{type},'_blink = SEM_blink;'])
+                    eval(['SEM_',event_types{type},'_saccade = SEM_saccade;'])
+                    eval(['SEM_',event_types{type},'_microsaccade = SEM_microsaccade;'])
+    
+                    % Loop individual trials
+                    if isequal(create_visualizations,'y')
+    
+                        % Timevector
+                        timevector = -9000:9000;
+    
+                        % Setup figure
+                        figure
+                        hold on
+    
+                        title([subID,' - ',event_types{type}],'Interpreter','none')
+                        xlabel('Time (ms)')
+                        ylabel('Pupil diameter')
+                        xlim([-1000 6000])
+    
+                        % Loop over epochs
+                        for epoch = 1:size(all_pupil_epochs,1)
+    
+                            plot(timevector,all_pupil_epochs(epoch,:))
+    
+                        end
+    
+                    end
+    
+                end
+    
+            end
+             
+        end
+    
+        %% Calculate EyeLink Results
+    %{
+        % Combine all events within the stimulus locations (not the distractor or white stimulus)
+        all_stim_left_pupil_epochs = [glare_left_pupil_epochs; nonglare_left_pupil_epochs;iso_left_pupil_epochs]; %; white_left_pupil_epochs
+        all_stim_right_pupil_epochs = [glare_right_pupil_epochs; nonglare_right_pupil_epochs;iso_right_pupil_epochs]; %; white_right_pupil_epochs
+        all_stim_pupil_epochs = [all_stim_left_pupil_epochs; all_stim_right_pupil_epochs];
+    
+        all_stim_left_blink_epochs = [glare_left_blink_epochs; nonglare_left_blink_epochs;iso_left_blink_epochs]; %; white_left_blink_epochs
+        all_stim_right_blink_epochs = [glare_right_blink_epochs; nonglare_right_blink_epochs;iso_right_blink_epochs]; %; white_right_blink_epochs
+        all_stim_blink_epochs = [all_stim_left_blink_epochs; all_stim_right_blink_epochs];
+    
+        all_stim_left_microsaccade_epochs = [glare_left_microsaccade_epochs; nonglare_left_microsaccade_epochs;iso_left_microsaccade_epochs]; %; white_left_microsaccade_epochs
+        all_stim_right_microsaccade_epochs = [glare_right_microsaccade_epochs; nonglare_right_microsaccade_epochs;iso_right_microsaccade_epochs]; %; white_right_microsaccade_epochs
+        all_stim_microsaccade_epochs = [all_stim_left_microsaccade_epochs; all_stim_right_microsaccade_epochs];
+    
+        % Find mean and SEM
+    
+        % Pupil
+        mean_all_stim_left_pupil = mean(all_stim_left_pupil_epochs,1,'omitnan');
+        mean_all_stim_right_pupil = mean(all_stim_right_pupil_epochs,1,'omitnan');
+        mean_all_stim_pupil = mean(all_stim_pupil_epochs,1,'omitnan');
+    
+        SEM_all_stim_left_pupil = std(all_stim_left_pupil_epochs,1)/sqrt(size(all_stim_left_pupil_epochs,1));
+        SEM_all_stim_right_pupil = std(all_stim_right_pupil_epochs,1)/sqrt(size(all_stim_right_pupil_epochs,1));
+        SEM_all_stim_pupil = std(all_stim_pupil_epochs,1)/sqrt(size(all_stim_pupil_epochs,1));
+    
+        % Blink - Smooth timecourses
+        mean_all_stim_left_blink = movmean(mean(all_stim_left_blink_epochs,1,'omitnan'),blink_saccade_smoothing_span);
+        mean_all_stim_right_blink = movmean(mean(all_stim_right_blink_epochs,1,'omitnan'),blink_saccade_smoothing_span);
+        mean_all_stim_blink = movmean(mean(all_stim_blink_epochs,1,'omitnan'),blink_saccade_smoothing_span);
+    
+        SEM_all_stim_left_blink = movmean(std(all_stim_left_blink_epochs,1)/sqrt(size(all_stim_left_blink_epochs,1)),blink_saccade_smoothing_span);
+        SEM_all_stim_right_blink = movmean(std(all_stim_right_blink_epochs,1)/sqrt(size(all_stim_right_blink_epochs,1)),blink_saccade_smoothing_span);
+        SEM_all_stim_blink = movmean(std(all_stim_blink_epochs,1)/sqrt(size(all_stim_blink_epochs,1)),blink_saccade_smoothing_span);
+    
+        % Microsaccade - Smooth timecourses
+        mean_all_stim_left_microsaccade = movmean(mean(all_stim_left_microsaccade_epochs,1,'omitnan'),blink_saccade_smoothing_span);
+        mean_all_stim_right_microsaccade = movmean(mean(all_stim_right_microsaccade_epochs,1,'omitnan'),blink_saccade_smoothing_span);
+        mean_all_stim_microsaccade = movmean(mean(all_stim_microsaccade_epochs,1,'omitnan'),blink_saccade_smoothing_span);
+    
+        SEM_all_stim_left_microsaccade = movmean(std(all_stim_left_microsaccade_epochs,1)/sqrt(size(all_stim_left_microsaccade_epochs,1)),blink_saccade_smoothing_span);
+        SEM_all_stim_right_microsaccade = movmean(std(all_stim_right_microsaccade_epochs,1)/sqrt(size(all_stim_right_microsaccade_epochs,1)),blink_saccade_smoothing_span);
+        SEM_all_stim_microsaccade = movmean(std(all_stim_microsaccade_epochs,1)/sqrt(size(all_stim_microsaccade_epochs,1)),blink_saccade_smoothing_span);
+    %}
+        % Save the relevant variables
+        cd(output_dir)
+        %save 'Glare_illusion_EyeLink_results.mat' mean_* SEM* ISI*epochs distractor*epochs glare*epochs nonglare*epochs iso*epochs white*epochs
+        if isequal(session_type,'MEG')
+    
+            % Create a sighted and blind epoch varialbe of all nontarget
+            % stimuli in the order of their appearance
+            [left_sort, left_sort_idx] = sort([glare_left;nonglare_left]);
+            [right_sort, right_sort_idx] = sort([glare_right;nonglare_right]);
+    
+            % Combine left and right nontarget varialbes
+            all_left_pupil_epochs = [glare_left_pupil_epochs;nonglare_left_pupil_epochs];
+            all_left_blink_epochs = [glare_left_blink_epochs;nonglare_left_blink_epochs];
+            all_left_microsaccade_epochs = [glare_left_microsaccade_epochs;nonglare_left_microsaccade_epochs];
+    
+            all_right_pupil_epochs = [glare_right_pupil_epochs;nonglare_right_pupil_epochs];
+            all_right_blink_epochs = [glare_right_blink_epochs;nonglare_right_blink_epochs];
+            all_right_microsaccade_epochs = [glare_right_microsaccade_epochs;nonglare_right_microsaccade_epochs];
+    
+            % Check sizes
+            if ~isequal(length(left_sort_idx),size(all_left_pupil_epochs,1)) || ...
+                ~isequal(length(right_sort_idx),size(all_right_pupil_epochs,1))
+                
+                error('Epoch number and idx size mismatch!')
+    
+            end
+    
+            % Sort epochs according to order of presentation
+            all_left_pupil_epochs = all_left_pupil_epochs(left_sort_idx,:);
+            all_left_blink_epochs = all_left_blink_epochs(left_sort_idx,:);
+            all_left_microsaccade_epochs = all_left_microsaccade_epochs(left_sort_idx,:);
+    
+            all_right_pupil_epochs = all_right_pupil_epochs(right_sort_idx,:);
+            all_right_blink_epochs = all_right_blink_epochs(right_sort_idx,:);
+            all_right_microsaccade_epochs = all_right_microsaccade_epochs(right_sort_idx,:);
+      
+            %save 'Glare_illusion_EyeLink_results.mat' ISI_glare_nonglare_white_iso*epochs mean_ISI_glare_nonglare_white_iso* SEM_ISI_glare_nonglare_white_iso* '-append'
+            save 'Glare_illusion_EyeLink_results.mat' mean_* SEM* ISI*epochs distractor*epochs glare*epochs nonglare*epochs all*
+    
+        else
+           
+            %save 'Glare_illusion_EyeLink_results.mat' ISI_iso*epochs ISI_glare_nonglare_white_iso*epochs mean_ISI_glare_nonglare_white_iso* SEM_ISI_glare_nonglare_white_iso* '-append'
+            save 'Glare_illusion_EyeLink_results.mat' mean_* SEM* ISI*epochs distractor*epochs glare*epochs nonglare*epochs iso*epochs white*epochs
+    
+        end
+        
+    % Load previously analyzed data    
+    elseif isequal(analysis_type,'load')
+
+        load(fullfile(output_dir,'Glare_illusion_EyeLink_results.mat'))
+
+    end
+
+    %% Plot Subject Results
+    if isequal(create_visualizations,'y')
+        
+        % Setup figure setting
+        set(0,'DefaultFigureRenderer','painters')
+        
+        %% Plot Left and Right Side Stimuli Individually - Pupil Mean Timecourses
+        
+        % Event type
+        event_type = {'glare','nonglare','iso','white','distractor'};
+        
+        % Color vector
+        color_type = {'b','g','k','y','r'};
+        
+        % Set figure parameters
+        max_y = 100;
+        min_y = -100;
+        min_x = -500;
+        max_x = 6000;
+        
+        % Loop over events
+        for event = 1:length(event_type)
+        
+            % Define data
+            mean_left_data = eval(['mean_',event_type{event},'_left_pupil']);
+            mean_right_data = eval(['mean_',event_type{event},'_right_pupil']); 
+            
+            SEM_left_data = eval(['SEM_',event_type{event},'_left_pupil']);
+            SEM_right_data = eval(['SEM_',event_type{event},'_right_pupil']); 
+        
+            % Setup figure
+            figure
+            hold on
+            
+            title(['Pupil Timecourses - ',event_type{event},' - Subject ', subID])
+            ylabel('Pupil Size (pixels)')
+            xlabel('Time (ms)')
+            ylim([min_y max_y])
+            xlim([min_x max_x])
+            
+            % Timevector
+            timevector = [-epoch_duration:epoch_duration];
+            
+            % Reference line
+            stim_onset_time = plot([0,0],[min_y max_y],'k')
+            stim_offset_time = plot([stim_duration,stim_duration],[min_y max_y],'k')
+            
+            % Mean Timecourses
+            mean_right_timecourse = plot(timevector, mean_right_data,color_type{event},'LineWidth',3)
+            mean_left_timecourse = plot(timevector, mean_left_data,['--',color_type{event}]','LineWidth',3)
+        
+            % SEM Timecourses
+            plot(timevector, mean_right_data+SEM_right_data,color_type{event},'LineWidth',1)
+            plot(timevector, mean_left_data+SEM_left_data,['--',color_type{event}]','LineWidth',1)
+            plot(timevector, mean_right_data-SEM_right_data,color_type{event},'LineWidth',1)
+            plot(timevector, mean_left_data-SEM_left_data,['--',color_type{event}]','LineWidth',1)
+        
+            %Legend
+            legend([mean_right_timecourse, mean_left_timecourse],{['Right Events N = ',num2str(size(eval([event_type{event},'_right_pupil_epochs']),1))],...
+                ['Left Events N = ',num2str(size(eval([event_type{event},'_left_pupil_epochs']),1))]})
+        
+        end
+        
+        %% Plot All Stimuli on Left and Right
+        %{
+        min_x = -500;
+        max_x = 6000;
+        
+        % Set subject colors
+        if ismember(subID,{'P3','P4','P6'})
+        
+            right_color = 'k';
+            left_color = [0.9290 0.6940 0.1250];
+        
+        else
+        
+            left_color = 'k';
+            right_color = [0.9290 0.6940 0.1250];
+        
+        end
+        
+        % Pupil
+        
+        % Set subject level y values
+        if isequal(subID,'P4')
+        
+            max_y = 120;
+            min_y = -150;
+        
+        elseif isequal(subID,'P1')
+        
+            max_y = 120;%120;
+            min_y = -150;
+        
+        elseif ismember(subID,{'C1','C2','C3'})    
+        
+            max_y = 100;
+            min_y = -200;    
+        
+        else
+        
+            max_y = 120;
+            min_y = -150;
+        
+        end
+        
+        % Setup figure
+        figure
+        hold on
+        
+        title(['All Stimuli - Pupil Timecourses - Subject ', subID])
+        ylabel('Pupil Size (pixels)')
+        xlabel('Time (ms)')
+        ylim([min_y max_y])
+        xlim([min_x max_x])
+        
+        % Timevector
+        timevector = [-epoch_duration:epoch_duration];
+        
+        % Reference line
+        stim_onset_time = plot([0,0],[min_y max_y],'k')
+        stim_offset_time = plot([stim_duration,stim_duration],[min_y max_y],'k')
+        
+        % SEM Timecourses
+        plot(timevector, all_stim_right_mean_pupil+all_stim_right_SEM_pupil,'Color',right_color,'LineWidth',1)
+        plot(timevector, all_stim_left_mean_pupil+all_stim_left_SEM_pupil,'Color',left_color,'LineWidth',1)
+        plot(timevector, all_stim_right_mean_pupil-all_stim_right_SEM_pupil,'Color',right_color,'LineWidth',1)
+        plot(timevector, all_stim_left_mean_pupil-all_stim_left_SEM_pupil,'Color',left_color,'LineWidth',1)
+        
+        % Mean Timecourses
+        mean_right_timecourse = plot(timevector, all_stim_right_mean_pupil,'Color',right_color,'LineWidth',3)
+        mean_left_timecourse = plot(timevector, all_stim_left_mean_pupil,'Color',left_color,'LineWidth',3)
+        
+        % Legend
+        legend([mean_right_timecourse mean_left_timecourse],{['Right Side (n = ',...
+            num2str(size(all_stim_right_pupil_epochs,1)),')'], ['Left Side (n = ',num2str(size(all_stim_left_pupil_epochs,1)),')']})
+        
+        % Blink
+        
+         % Set subject level y values
+        if isequal(subID,'P4')
+        
+            max_y = 0.6;
+            min_y = 0;
+        
+        elseif isequal(subID,'P1')
+        
+            max_y = 0.6;%0.25;
+            min_y = 0;
+        
+        else
+        
+            max_y = 0.6;
+            min_y = 0;
+        
+        end
+        
+        % Setup figure
+        figure
+        hold on
+        
+        title(['All Stimuli - Blink Timecourses - Subject ', subID])
+        ylabel('Blink Fraction')
+        xlabel('Time (ms)')
+        ylim([min_y max_y])
+        xlim([min_x max_x])
+        
+        % Timevector
+        timevector = [-epoch_duration:epoch_duration];
+        
+        % Reference line
+        stim_onset_time = plot([0,0],[min_y max_y],'k')
+        stim_offset_time = plot([stim_duration,stim_duration],[min_y max_y],'k')
+        
+        % SEM Timecourses
+        plot(timevector, all_stim_right_mean_blink+all_stim_right_SEM_blink,'Color',right_color,'LineWidth',1)
+        plot(timevector, all_stim_left_mean_blink+all_stim_left_SEM_blink,'Color',left_color,'LineWidth',1)
+        plot(timevector, all_stim_right_mean_blink-all_stim_right_SEM_blink,'Color',right_color,'LineWidth',1)
+        plot(timevector, all_stim_left_mean_blink-all_stim_left_SEM_blink,'Color',left_color,'LineWidth',1)
+        
+        % Mean Timecourses
+        mean_right_timecourse = plot(timevector, all_stim_right_mean_blink,'Color',right_color,'LineWidth',3)
+        mean_left_timecourse = plot(timevector, all_stim_left_mean_blink,'Color',left_color,'LineWidth',3)
+        
+        % Microsaccade
+        
+        % Set subject level y values
+        if isequal(subID,'P4')
+        
+            max_y = 0.18;
+            min_y = 0;
+        
+        elseif isequal(subID,'P1')
+        
+            max_y = 0.18;%0.25;
+            min_y = 0;
+        
+        else
+        
+            max_y = 0.18;
+            min_y = 0;
+        
+        end
+        
+        % Setup figure
+        figure
+        hold on
+        
+        title(['All Stimuli - Microsaccade Timecourses - Subject ', subID])
+        ylabel('Microsaccade Fraction')
+        xlabel('Time (ms)')
+        ylim([min_y max_y])
+        xlim([min_x max_x])
+        
+        % Timevector
+        timevector = [-epoch_duration:epoch_duration];
+        
+        % Reference line
+        stim_onset_time = plot([0,0],[min_y max_y],'k')
+        stim_offset_time = plot([stim_duration,stim_duration],[min_y max_y],'k')
+        
+        % SEM Timecourses
+        plot(timevector, all_stim_right_mean_microsaccade+all_stim_right_SEM_microsaccade,'Color',right_color,'LineWidth',1)
+        plot(timevector, all_stim_left_mean_microsaccade+all_stim_left_SEM_microsaccade,'Color',left_color,'LineWidth',1)
+        plot(timevector, all_stim_right_mean_microsaccade-all_stim_right_SEM_microsaccade,'Color',right_color,'LineWidth',1)
+        plot(timevector, all_stim_left_mean_microsaccade-all_stim_left_SEM_microsaccade,'Color',left_color,'LineWidth',1)
+        
+        % Mean Timecourses
+        mean_right_timecourse = plot(timevector, all_stim_right_mean_microsaccade,'Color',right_color,'LineWidth',3)
+        mean_left_timecourse = plot(timevector, all_stim_left_mean_microsaccade,'Color',left_color,'LineWidth',3)
+        %}
+        %% Plot Left and Right Side Stimuli Individually - Pupil Mean Timecourses
+        
+        % Event type
+        event_type = {'distractor'};
+        
+        % Color vector
+        color_type = {'r'};
+        
+        % Set figure parameters
+        if isequal(subID,'P1')
+        
+            max_y = 650;
+            min_y = -150;
+        
+        elseif isequal(subID,'P3')
+        
+            max_y = 400;
+            min_y = -100;
+        
+        elseif isequal(subID,'P4')
+        
+            max_y = 600;
+            min_y = -100;
+        
+        elseif isequal(subID,'P5')
+        
+            max_y = 400;
+            min_y = -150;
+        
+        elseif isequal(subID,'P6')
+        
+            max_y = 700;
+            min_y = -150;
+        
+        else
+        
+            max_y = 400;
+            min_y = -150;
+        
+        end
+        
+        min_x = -500;
+        max_x = 6000;
+        
+        % Loop over events
+        for event = 1:length(event_type)
+        
+            % Define data
+            mean_left_data = eval(['mean_',event_type{event},'_left_pupil']);
+            mean_right_data = eval(['mean_',event_type{event},'_right_pupil']); 
+            
+            SEM_left_data = eval(['SEM_',event_type{event},'_left_pupil']);
+            SEM_right_data = eval(['SEM_',event_type{event},'_right_pupil']); 
+        
+            % Setup figure
+            figure
+            hold on
+            
+            title(['Pupil Timecourses - ',event_type{event},' - Subject ', subID])
+            ylabel('Pupil Size (pixels)')
+            xlabel('Time (ms)')
+            ylim([min_y max_y])
+            xlim([min_x max_x])
+            
+            % Timevector
+            timevector = [-epoch_duration:epoch_duration];
+            
+            % Reference line
+            stim_onset_time = plot([0,0],[min_y max_y],'k')
+            stim_offset_time = plot([stim_duration,stim_duration],[min_y max_y],'k')
+            
+            % Mean Timecourses
+            mean_right_timecourse = plot(timevector, mean_right_data,color_type{event},'LineWidth',3)
+            mean_left_timecourse = plot(timevector, mean_left_data,['--',color_type{event}]','LineWidth',3)
+        
+            % SEM Timecourses
+            plot(timevector, mean_right_data+SEM_right_data,color_type{event},'LineWidth',1)
+            plot(timevector, mean_left_data+SEM_left_data,['--',color_type{event}]','LineWidth',1)
+            plot(timevector, mean_right_data-SEM_right_data,color_type{event},'LineWidth',1)
+            plot(timevector, mean_left_data-SEM_left_data,['--',color_type{event}]','LineWidth',1)
+        
+            %Legend
+            legend([mean_right_timecourse, mean_left_timecourse],{['Right Events N = ',num2str(size(eval([event_type{event},'_right_pupil_epochs']),1))],...
+                ['Left Events N = ',num2str(size(eval([event_type{event},'_left_pupil_epochs']),1))]})
+        
+        end
+        
+        %% Plot All Right and Left Side Averaged Timecourses
+        %{
+        % Set figure parameters
+        max_y = 400;
+        min_y = -350;
+        min_x = -500;
+        max_x = 6000;
+        
+        % Setup figure
+        figure
+        hold on
+        
+        title(['Pupil Timecourses - Left+Right Averaged - Subject ', subID])
+        ylabel('Pupil Size (pixels)')
+        xlabel('Time (ms)')
+        ylim([min_y max_y])
+        xlim([min_x max_x])
+        
+        % Timevector
+        timevector = [-epoch_duration:epoch_duration];
+        
+        % Reference line
+        stim_onset_time = plot([0,0],[min_y max_y],'k')
+        stim_offset_time = plot([stim_duration,stim_duration],[min_y max_y],'k')
+        
+        % Mean Timecourses
+        glare = plot(timevector, mean_all_glare_stim_pupil,'b','LineWidth',3)
+        nonglare = plot(timevector, mean_all_nonglare_stim_pupil,'g','LineWidth',3)
+        iso = plot(timevector, mean_all_iso_stim_pupil,'k','LineWidth',3)
+        white = plot(timevector, mean_all_white_stim_pupil,'y','LineWidth',3)
+        distractor = plot(timevector, mean_all_distractor_stim_pupil,'r','LineWidth',3)
+        
+        % SEM Timecourses
+        plot(timevector, mean_all_glare_stim_pupil+SEM_all_glare_stim_pupil,'--b','LineWidth',1)
+        plot(timevector, mean_all_glare_stim_pupil-SEM_all_glare_stim_pupil,'--b','LineWidth',1)
+        plot(timevector, mean_all_nonglare_stim_pupil+SEM_all_nonglare_stim_pupil,'--g','LineWidth',1)
+        plot(timevector, mean_all_nonglare_stim_pupil-SEM_all_nonglare_stim_pupil,'--g','LineWidth',1)
+        plot(timevector, mean_all_iso_stim_pupil+SEM_all_iso_stim_pupil,'--k','LineWidth',1)
+        plot(timevector, mean_all_iso_stim_pupil-SEM_all_iso_stim_pupil,'--k','LineWidth',1)
+        plot(timevector, mean_all_white_stim_pupil+SEM_all_white_stim_pupil,'--y','LineWidth',1)
+        plot(timevector, mean_all_white_stim_pupil-SEM_all_white_stim_pupil,'--y','LineWidth',1)
+        plot(timevector, mean_all_distractor_stim_pupil+SEM_all_distractor_stim_pupil,'--r','LineWidth',1)
+        plot(timevector, mean_all_distractor_stim_pupil-SEM_all_distractor_stim_pupil,'--r','LineWidth',1)
+        
+        %Legend
+        legend([glare, nonglare, iso, white, distractor],{['Glare Event N = ',num2str(size(all_glare_stim_pupil_epochs,1))],...
+            ['Non-Glare Event N = ',num2str(size(all_nonglare_stim_pupil_epochs,1))],['Iso Event N = ',num2str(size(all_iso_stim_pupil_epochs,1))],...
+            ['White Event N = ',num2str(size(all_white_stim_pupil_epochs,1))],['Distractor Stimuli N = ',num2str(size(all_distractor_stim_pupil_epochs,1))]})
+        %}    
+        %% Plot Left Side - Pupil Mean Timecourses
+        
+        % Setup figure setting
+        set(0,'DefaultFigureRenderer','painters')
+        
+        % Set figure parameters
+        if isequal(subID,'P4')
+        
+            max_y = 180;
+            min_y = -250;
+        
+        elseif isequal(subID,'P3')
+        
+            max_y = 180;
+            min_y = -150;
+        
+        elseif isequal(subID,'P2')
+        
+            max_y = 125;
+            min_y = -125;
+        
+        elseif isequal(subID,'P1')
+        
+            max_y = 250;
+            min_y = -250;
+        
+        elseif isequal(subID,'P6')
+        
+            max_y = 250;
+            min_y = -250;  
+        
+        elseif isequal(subID,'P5')
+        
+            max_y = 200;
+            min_y = -200;  
+        
+        else
+        
+            max_y = 100;
+            min_y = -100;
+        
+        end
+        
+        min_x = -1000;
+        max_x = 6000;
+        
+        % Setup figure
+        figure
+        hold on
+        
+        title(['Pupil Timecourses - Left Side - Subject ', subID])
+        ylabel('Pupil Size (pixels)')
+        xlabel('Time (ms)')
+        ylim([min_y max_y])
+        xlim([min_x max_x])
+        
+        % Timevector
+        timevector = [-epoch_duration:epoch_duration];
+        
+        % Reference line
+        stim_onset_time = plot([0,0],[min_y max_y],'k')
+        stim_offset_time = plot([stim_duration,stim_duration],[min_y max_y],'k')
+        
+        % Mean Timecourses
+        glare = plot(timevector, mean_glare_left_pupil,'b','LineWidth',3)
+        nonglare = plot(timevector, mean_nonglare_left_pupil,'g','LineWidth',3)
+        iso = plot(timevector, mean_iso_left_pupil,'k','LineWidth',3)
+        white = plot(timevector, mean_white_left_pupil,'y','LineWidth',3)
+        %distractor = plot(timevector, mean_distractor_left_stim_pupil,'r','LineWidth',3)
+        
+        % SEM Timecourses
+        plot(timevector, mean_glare_left_pupil+SEM_glare_left_pupil,'--b','LineWidth',1)
+        plot(timevector, mean_glare_left_pupil-SEM_glare_left_pupil,'--b','LineWidth',1)
+        plot(timevector, mean_nonglare_left_pupil+SEM_nonglare_left_pupil,'--g','LineWidth',1)
+        plot(timevector, mean_nonglare_left_pupil-SEM_nonglare_left_pupil,'--g','LineWidth',1)
+        plot(timevector, mean_iso_left_pupil+SEM_iso_left_pupil,'--k','LineWidth',1)
+        plot(timevector, mean_iso_left_pupil-SEM_iso_left_pupil,'--k','LineWidth',1)
+        plot(timevector, mean_white_left_pupil+SEM_white_left_pupil,'--y','LineWidth',1)
+        plot(timevector, mean_white_left_pupil-SEM_white_left_pupil,'--y','LineWidth',1)
+        %plot(timevector, mean_distractor_left_stim_pupil+SEM_distractor_left_stim_pupil,'--r','LineWidth',1)
+        %plot(timevector, mean_distractor_left_stim_pupil-SEM_distractor_left_stim_pupil,'--r','LineWidth',1)
+        
+        %Legend
+        legend([glare, nonglare, iso, white],{['Glare Event N = ',num2str(size(glare_left_pupil_epochs,1))],...
+           ['Non-Glare Event N = ',num2str(size(nonglare_left_pupil_epochs,1))],['Iso Event N = ',num2str(size(iso_left_pupil_epochs,1))],...
+           ['White Event N = ',num2str(size(white_left_pupil_epochs,1))]});%,['Distractor Stimuli N = ',num2str(size(distractor_left_stim_pupil_epochs,1))]})
+        
+        %% Plot Right Side - Pupil Mean Timecourses
+        
+        % Setup figure setting
+        set(0,'DefaultFigureRenderer','painters')
+        
+        % Set figure parameters
+        if isequal(subID,'P4')
+        
+            max_y = 180;
+            min_y = -250;
+        
+        elseif isequal(subID,'P3')
+        
+            max_y = 180;
+            min_y = -150;
+        
+        elseif isequal(subID,'P2')
+        
+            max_y = 125;
+            min_y = -125;    
+        
+        elseif isequal(subID,'P1')
+        
+            max_y = 250;
+            min_y = -250;    
+        
+         elseif isequal(subID,'P6')
+        
+            max_y = 250;
+            min_y = -250;              
+        
+         elseif isequal(subID,'P5')
+        
+                max_y = 200;
+                min_y = -200;  
+        
+         else
+        
+            max_y = 100;
+            min_y = -100;
+            
+         end
+        
+        min_x = -1000;
+        max_x = 6000;
+        
+        % Setup figure
+        figure
+        hold on
+        
+        title(['Pupil Timecourses - Right Side - Subject ', subID])
+        ylabel('Pupil Size (pixels)')
+        xlabel('Time (ms)')
+        ylim([min_y max_y])
+        xlim([min_x max_x])
+        
+        % Timevector
+        timevector = [-epoch_duration:epoch_duration];
+        
+        % Reference line
+        stim_onset_time = plot([0,0],[min_y max_y],'k')
+        stim_offset_time = plot([stim_duration,stim_duration],[min_y max_y],'k')
+        
+        % Mean Timecourses
+        glare = plot(timevector, mean_glare_right_pupil,'b','LineWidth',3)
+        nonglare = plot(timevector, mean_nonglare_right_pupil,'g','LineWidth',3)
+        iso = plot(timevector, mean_iso_right_pupil,'k','LineWidth',3)
+        white = plot(timevector, mean_white_right_pupil,'y','LineWidth',3)
+        %distractor = plot(timevector, mean_distractor_right_stim_pupil,'r','LineWidth',3)
+        
+        % SEM Timecourses
+        plot(timevector, mean_glare_right_pupil+SEM_glare_right_pupil,'--b','LineWidth',1)
+        plot(timevector, mean_glare_right_pupil-SEM_glare_right_pupil,'--b','LineWidth',1)
+        plot(timevector, mean_nonglare_right_pupil+SEM_nonglare_right_pupil,'--g','LineWidth',1)
+        plot(timevector, mean_nonglare_right_pupil-SEM_nonglare_right_pupil,'--g','LineWidth',1)
+        plot(timevector, mean_iso_right_pupil+SEM_iso_right_pupil,'--k','LineWidth',1)
+        plot(timevector, mean_iso_right_pupil-SEM_iso_right_pupil,'--k','LineWidth',1)
+        plot(timevector, mean_white_right_pupil+SEM_white_right_pupil,'--y','LineWidth',1)
+        plot(timevector, mean_white_right_pupil-SEM_white_right_pupil,'--y','LineWidth',1)
+        %plot(timevector, mean_distractor_right_stim_pupil+SEM_distractor_right_stim_pupil,'--r','LineWidth',1)
+        %plot(timevector, mean_distractor_right_stim_pupil-SEM_distractor_right_stim_pupil,'--r','LineWidth',1)
+        
+        %Legend
+        legend([glare, nonglare, iso, white],{['Glare Event N = ',num2str(size(glare_right_pupil_epochs,1))],...
+           ['Non-Glare Event N = ',num2str(size(nonglare_right_pupil_epochs,1))],['Iso Event N = ',num2str(size(iso_right_pupil_epochs,1))],...
+           ['White Event N = ',num2str(size(white_right_pupil_epochs,1))]});%,['Distractor Stimuli N = ',num2str(size(distractor_right_stim_pupil_epochs,1))]})
+        
+        %% Plot Left Side - Blink Mean Timecourses
+        
+        % Set figure parameters
+        max_y = 0.3;
+        min_y = 0;
+        min_x = -500;
+        max_x = 6000;
+        
+        % Setup figure
+        figure
+        hold on
+        
+        title(['Blink Timecourses - Left Side - Subject ', subID])
+        ylabel('Blink Fraction')
+        xlabel('Time (ms)')
+        ylim([min_y max_y])
+        xlim([min_x max_x])
+        
+        % Timevector
+        timevector = [-epoch_duration:epoch_duration];
+        
+        % Reference line
+        stim_onset_time = plot([0,0],[min_y max_y],'k')
+        stim_offset_time = plot([stim_duration,stim_duration],[min_y max_y],'k')
+        
+        % Mean Timecourses
+        glare = plot(timevector, mean_smooth_glare_left_stim_blink,'b','LineWidth',2)
+        nonglare = plot(timevector, mean_smooth_nonglare_left_stim_blink,'g','LineWidth',2)
+        iso = plot(timevector, mean_smooth_iso_left_stim_blink,'k','LineWidth',2)
+        white = plot(timevector, mean_smooth_white_left_stim_blink,'y','LineWidth',2)
+        distractor = plot(timevector, mean_smooth_distractor_left_stim_blink,'r','LineWidth',2)
+        
+        %Legend
+        legend([glare, nonglare, iso, white, distractor],{['Glare Event N = ',num2str(size(glare_left_stim_pupil_epochs,1))],...
+            ['Non-Glare Event N = ',num2str(size(nonglare_left_stim_pupil_epochs,1))],['Iso Event N = ',num2str(size(iso_left_stim_pupil_epochs,1))],...
+            ['White Event N = ',num2str(size(white_left_stim_pupil_epochs,1))],['Distractor Stimuli N = ',num2str(size(distractor_left_stim_pupil_epochs,1))]})
+        
+        %% Plot Right Side - Blink Mean Timecourses
+        
+        % Set figure parameters
+        max_y = 0.3;
+        min_y = 0;
+        min_x = -500;
+        max_x = 6000;
+        
+        % Setup figure
+        figure
+        hold on
+        
+        title(['Blink Timecourses - Right Side - Subject ', subID])
+        ylabel('Blink Fraction')
+        xlabel('Time (ms)')
+        ylim([min_y max_y])
+        xlim([min_x max_x])
+        
+        % Timevector
+        timevector = [-epoch_duration:epoch_duration];
+        
+        % Reference line
+        stim_onset_time = plot([0,0],[min_y max_y],'k')
+        stim_offset_time = plot([stim_duration,stim_duration],[min_y max_y],'k')
+        
+        % Mean Timecourses
+        glare = plot(timevector, mean_smooth_glare_right_stim_blink,'b','LineWidth',2)
+        nonglare = plot(timevector, mean_smooth_nonglare_right_stim_blink,'g','LineWidth',2)
+        iso = plot(timevector, mean_smooth_iso_right_stim_blink,'k','LineWidth',2)
+        white = plot(timevector, mean_smooth_white_right_stim_blink,'y','LineWidth',2)
+        distractor = plot(timevector, mean_smooth_distractor_right_stim_blink,'r','LineWidth',2)
+        
+        %Legend
+        legend([glare, nonglare, iso, white, distractor],{['Glare Event N = ',num2str(size(glare_right_stim_pupil_epochs,1))],...
+            ['Non-Glare Event N = ',num2str(size(nonglare_right_stim_pupil_epochs,1))],['Iso Event N = ',num2str(size(iso_right_stim_pupil_epochs,1))],...
+            ['White Event N = ',num2str(size(white_right_stim_pupil_epochs,1))],['Distractor Stimuli N = ',num2str(size(distractor_right_stim_pupil_epochs,1))]})
+        
+        %% Plot Left Side - Saccade Mean Timecourses
+        
+        % Set figure parameters
+        max_y = 0.2;
+        min_y = 0;
+        min_x = -500;
+        max_x = 6000;
+        
+        % Setup figure
+        figure
+        hold on
+        
+        title(['Saccade Timecourses - Left Side - Subject ', subID])
+        ylabel('Saccade Fraction')
+        xlabel('Time (ms)')
+        ylim([min_y max_y])
+        xlim([min_x max_x])
+        
+        % Timevector
+        timevector = [-epoch_duration:epoch_duration];
+        
+        % Reference line
+        stim_onset_time = plot([0,0],[min_y max_y],'k')
+        stim_offset_time = plot([stim_duration,stim_duration],[min_y max_y],'k')
+        
+        % Mean Timecourses
+        glare = plot(timevector, mean_smooth_glare_left_stim_saccade,'b','LineWidth',2)
+        nonglare = plot(timevector, mean_smooth_nonglare_left_stim_saccade,'g','LineWidth',2)
+        iso = plot(timevector, mean_smooth_iso_left_stim_saccade,'k','LineWidth',2)
+        white = plot(timevector, mean_smooth_white_left_stim_saccade,'y','LineWidth',2)
+        distractor = plot(timevector, mean_smooth_distractor_left_stim_saccade,'r','LineWidth',2)
+        
+        %Legend
+        legend([glare, nonglare, iso, white, distractor],{['Glare Event N = ',num2str(size(glare_left_stim_saccade_epochs,1))],...
+            ['Non-Glare Event N = ',num2str(size(nonglare_left_stim_saccade_epochs,1))],...
+            ['Iso Event N = ',num2str(size(iso_left_stim_saccade_epochs,1))],...
+            ['White Event N = ',num2str(size(white_left_stim_saccade_epochs,1))],...
+            ['Distractor Stimuli N = ',num2str(size(distractor_left_stim_pupil_epochs,1))]})
+        
+        %% Plot Right Side - Saccade Mean Timecourses
+        
+        % Set figure parameters
+        max_y = 0.2;
+        min_y = 0;
+        min_x = -500;
+        max_x = 6000;
+        
+        % Setup figure
+        figure
+        hold on
+        
+        title(['Saccade Timecourses - Right Side - Subject ', subID])
+        ylabel('Saccade Fraction')
+        xlabel('Time (ms)')
+        ylim([min_y max_y])
+        xlim([min_x max_x])
+        
+        % Timevector
+        timevector = [-epoch_duration:epoch_duration];
+        
+        % Reference line
+        stim_onset_time = plot([0,0],[min_y max_y],'k')
+        stim_offset_time = plot([stim_duration,stim_duration],[min_y max_y],'k')
+        
+        % Mean Timecourses
+        glare = plot(timevector, mean_smooth_glare_right_stim_saccade,'b','LineWidth',2)
+        nonglare = plot(timevector, mean_smooth_nonglare_right_stim_saccade,'g','LineWidth',2)
+        iso = plot(timevector, mean_smooth_iso_right_stim_saccade,'k','LineWidth',2)
+        white = plot(timevector, mean_smooth_white_right_stim_saccade,'y','LineWidth',2)
+        distractor = plot(timevector, mean_smooth_distractor_right_stim_saccade,'r','LineWidth',2)
+        
+        %Legend
+        legend([glare, nonglare, iso, white, distractor],{['Glare Event N = ',num2str(size(glare_right_stim_saccade_epochs,1))],...
+            ['Non-Glare Event N = ',num2str(size(nonglare_right_stim_saccade_epochs,1))],...
+            ['Iso Event N = ',num2str(size(iso_right_stim_saccade_epochs,1))],...
+            ['White Event N = ',num2str(size(white_right_stim_saccade_epochs,1))],...
+            ['Distractor Stimuli N = ',num2str(size(distractor_right_stim_pupil_epochs,1))]})
+
+    end
+
+end
+        
