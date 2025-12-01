@@ -5,5 +5,8 @@ Analysis steps:
 (3) Run Machine_Learning_Subject_Level_Layered.m script. Creates Figure 4 and Supplementary Figure 5. 
 (4) Run EyeLink_Plot_Subject_Eye_Timecourses.m script. Creates pupil, blink, and microsaccade timecourses in Figure 6 and Supplementary Figure 6.
 
+Data
+Relevant data (.mat) is stored in the Patients and Controls directory here https://osf.io/cygmj/
+
 Helper Functions
 EyeLink preprocessing (e.g., pupil blink removal): stublink.m and Stublinks60.m
