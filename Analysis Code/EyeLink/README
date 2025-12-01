@@ -1,4 +1,4 @@
-EyeLink Analysis Stages
+Analysis steps:
 
 (1) Run the Glare_Illusion_EyeLink_Subject_Analysis_v5.m script. This will preprocess the EyeLink data and segment the EyeLink data into epochs
 (2) Run the Glare_Illusion_EyeLink_Group_Analysis_v2.m script. 
