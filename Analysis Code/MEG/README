@@ -2,5 +2,5 @@ Analysis steps:
 
 (1) Run MEG_subject_level_data_analysis.m (Note: only one patient participant [P4] completed an MEG study session)
 
-Helper functions:
+Helper functions
 Permutation_Analysis.zip houses the scripts/functions that are used by MEG_subject_level_data_analysis.m
