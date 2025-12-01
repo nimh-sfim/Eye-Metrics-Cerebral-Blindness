@@ -1,5 +1,7 @@
 Analysis steps:
 
+Note: Update "root_dir" variable to correspond with your data path.
+
 (1) Run MEG_subject_level_data_analysis.m. Output results for Figure 6F and Supplementary Figure 7. 
 
 Data
