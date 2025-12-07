@@ -2,19 +2,25 @@ Instructions for running the paradigm
 
 When initating the paradigm in Psychopy, a start-up screen will appear:
 
-"Skip Positioning Phase" (default = "n" or no) 
+"Skip Positioning Phase" (default = "n" or no)
+The positioning phase allows the experimenter to adjust the position of stimuli in the sighted and blind field of cerebrally blind patients. If the Positioning Phase is skipped, the values inputed in "Final X position" and "Final Y position" will be used. When completing the positioning phase, participants should remain fixated on the central fixation image and verbally indicate their perception for on-screen stimuli. 
+
 "Skip Main Phase" (default = "n" or no)
+The main task phase uses the stimulus position set during the positioning phase or set in "Final X position" and "Final Y position" to present stimuli. See Kronemer et al., Communications Biology, 2025 methods section for full details on the task design and parameters. If "Skip Main Phase" is set to "y" or yes, the task will proceed immediately to the Brightness Phase. 
+
 "Skip Brightness Phase" (default = "n" or no)
-"Button Condition" (default = 1) 
+See Kronemer et al., Communications Biology, 2025 methods section for full details on the task design and parameters.
+
+"Button Condition" (default = 1)
+The button condition indicates which button is coded with which keypress. Button condition 1 = "When you see a red plug sign (+) - Press 1" and "When you see a red cross (x) image - Press 2". Button condition 2 = "When you see a red plug sign (+) - Press 2" and "When you see a red cross (x) image - Press 1".
+
 "EyeLink" (default = "n" or no)
 "EyeLink EDF" (default = "test.edf") 
+EyeLink allows for a maximum of 8 characters before ".edf" 
+
 "Final X position"
 "Final Y position"
+If completing the positioning phase, no value needs to be entered for the X or Y position. If not completing the positioning phase, the X and Y position values will be used for the stimulus position. The task stores the X and Y positions in the behavioral log file, which can be used in subsequent study sessions. 
+
 "Session #"
 "Subject ID"
-
-Positioning Phase
-
-Main Phase
-
-Brightness Phase
