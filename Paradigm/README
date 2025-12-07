@@ -18,8 +18,8 @@ The button condition indicates which button is coded with which keypress. Button
 "EyeLink EDF" (default = "test.edf") 
 EyeLink allows for a maximum of 8 characters before ".edf" 
 
-"Final X position"
-"Final Y position"
+"Final X position" (default = 0)
+"Final Y position" (default = 0)
 If completing the positioning phase, no value needs to be entered for the X or Y position. If not completing the positioning phase, the X and Y position values will be used for the stimulus position. The task stores the X and Y positions in the behavioral log file, which can be used in subsequent study sessions. 
 
 "Session #"
