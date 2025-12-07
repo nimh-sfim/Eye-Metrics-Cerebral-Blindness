@@ -14,9 +14,9 @@ All control (n = 8) and patient participants (n = 8) have two associated file ty
 
 One patient participant (P4) completed additional behavioral and magnetoencephalography (MEG) study sessions. The additional behavioral session invovled an "adapted" perception task (see data directory Patients/P4/Adapted_Task on https://osf.io/cygmj/). The original task was tested with P4 in both behavioral and MEG study sessions (see data directory Patients/P4/Original_Task on https://osf.io/cygmj/). The MEG sessions includes the behavioral log file and MEG files.
 
-## TASK & STIMULI
+## PARADIGM & STIMULI
 
-The behavioral task script and stimuli are included. The task script is integrated with EyeLink. To use the script with EyeLink requires installing the EyeLink Developer's Kit from SR Research, Inc. 
+The behavioral paradigm script (titled the Glare Illusion Paradigm) and stimuli are included. The task script is integrated with EyeLink. To use the script with EyeLink requires installing the EyeLink Developer's Kit from SR Research, Inc. 
 
 ## CODE
 
