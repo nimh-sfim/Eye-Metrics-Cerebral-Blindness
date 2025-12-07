@@ -1,0 +1,20 @@
+Instructions for running the paradigm
+
+When initating the paradigm in Psychopy, a start-up screen will appear:
+
+"Skip Positioning Phase" (default = "n" or no) 
+"Skip Main Phase" (default = "n" or no)
+"Skip Brightness Phase" (default = "n" or no)
+"Button Condition" (default = 1) 
+"EyeLink" (default = "n" or no)
+"EyeLink EDF" (default = "test.edf") 
+"Final X position"
+"Final Y position"
+"Session #"
+"Subject ID"
+
+Positioning Phase
+
+Main Phase
+
+Brightness Phase
