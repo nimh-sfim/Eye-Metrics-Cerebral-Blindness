@@ -16,7 +16,7 @@ One patient participant (P4) completed additional behavioral and magnetoencephal
 
 ## PARADIGM & STIMULI
 
-The behavioral paradigm script (titled the Glare Illusion Paradigm) and stimuli are included. The task script is integrated with EyeLink. To use the script with EyeLink requires installing the EyeLink Developer's Kit from SR Research, Inc. 
+The behavioral paradigm script (titled the Glare Illusion Paradigm) and stimuli are included. The task script is integrated with EyeLink. To use the script with EyeLink requires installing the EyeLink Developer's Kit from SR Research, Inc. Instructions for running the task are found in the README of the Paradigm directory.
 
 ## CODE
 
